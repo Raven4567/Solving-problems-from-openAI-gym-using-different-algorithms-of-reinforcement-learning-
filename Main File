@@ -1,0 +1,198 @@
+import gym
+import torch
+from torch import nn, optim, tensor, randint
+from matplotlib import pyplot as plt
+#import numpy as np
+
+from random import random, sample
+from collections import deque, namedtuple
+from tqdm import tqdm
+
+RESET_PARAMETERS = True
+
+BATCH_SIZE = 128
+INTERVAL_OF_UPDATE = 100
+
+EPOCHS = 1
+EPISODES = 5000
+
+TAU = 0.005
+
+EPS_START = 0.95
+EPS_END = 0.0005
+EPS_DECAY = (EPS_START - EPS_END) / (1000)
+
+ENV = gym.make("CartPole-v1")
+
+INPUTS = ENV.observation_space.shape
+OUTPUTS = ENV.action_space.n
+
+Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state'))
+
+class ReplayBuffer:
+    def __init__(self, capacity):
+        self.memory = deque([], maxlen=capacity)
+
+    def push(self, *args):
+        self.memory.append(Transition(*args))
+
+    def sample_data(self):
+        batch = sample(self.memory, BATCH_SIZE)
+        batch = Transition(*zip(*batch))
+
+        return batch
+    
+    def __len__(self):
+        return len(self.memory)
+
+class Deep_Q_Network(nn.Module):
+    def __init__(self):
+
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(INPUTS[0], 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, OUTPUTS)
+            ) 
+
+        self.loss_fn = nn.SmoothL1Loss()
+        self.optimizer = optim.AdamW(self.parameters(), lr=0.001, amsgrad=True)
+
+        self.eps = EPS_START
+    
+    def forward(self, X):
+        return self.model(X)
+    
+    def Act(self, state):
+        self.eps = self.eps - EPS_DECAY if self.eps > EPS_END else self.eps
+
+        if self.eps > random():
+            action = randint(0, 2, (1,))
+            return action
+        
+        else:
+            return self.model(state.unsqueeze(0))
+    
+    def Education(self, Memory, Q_target_network):
+        if len(Memory) < BATCH_SIZE:
+            return 
+        
+        batch = Memory.sample_data()
+
+        non_final_mask = tensor(tuple(map(lambda x: x is not None, batch.next_state)), dtype=torch.bool)
+        non_final_next_states = torch.cat(tensor([s for s in batch.next_state if s is not None]))
+
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
+
+        Q_targets = torch.zeros(BATCH_SIZE)
+        
+        with torch.no_grad():
+            Q_targets[non_final_mask] = Q_target_network(non_final_next_states).max()
+
+        q_target = reward_batch + (0.99 * Q_targets)
+        action = self.model(state_batch).gather(1, action_batch)
+
+        loss = self.loss_fn(action.squeeze(), q_target)
+
+        self.optimizer.zero_grad()
+
+        loss.backward()
+
+        self.optimizer.step()
+
+        target_net_state_dict = Q_target_network.state_dict()
+        policy_net_state_dict = self.state_dict()
+
+        for key in policy_net_state_dict:
+            target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+        Q_target_network.load_state_dict(target_net_state_dict)
+    
+    def Reset(self):
+        for layer in self.model.children():
+            if hasattr(layer, 'reset_parameters'):
+                layer.reset_parameters()
+
+class Statistic:
+    def __init__(self):
+        self.total_episods = []
+        self.episode_numbers = []
+
+        plt.ion()
+
+        plt.title("Total Reward Over Episodes")
+
+        plt.xlabel("Episodes")
+        plt.ylabel("Total Reward")
+
+    def add(self, total_episode, episode_number):
+        self.total_episods.append(total_episode)
+        self.episode_numbers.append(episode_number)
+        
+        plt.clf()
+        plt.plot(self.episode_numbers, self.total_episods, color='b')
+        plt.pause(0.001)
+
+    def show(self):
+        plt.ioff()
+        plt.show()
+
+class Envinronment:
+    def __init__(self, env, Q_Network, Q_target, Buffer):
+        self.env = env
+        
+        self.Q_Network = Q_Network
+        self.Q_target = Q_target
+        self.Buffer = Buffer
+
+        self.obs = env.reset()[0]
+
+        self.episde_for_step = 0
+        self.current_coplete_episode = 0
+    
+    def step(self, episode):
+        action = self.Q_Network.Act(tensor(self.obs)).argmax()
+        self.env.render()
+
+        next_state, reward, done, _, _ = self.env.step(action.item())
+
+        next_obs = None if done is True else next_state
+
+        self.Buffer.push(self.obs, action, reward, next_obs)
+
+        self.obs = next_state
+
+        self.episde_for_step += 1
+        self.current_coplete_episode += 1
+
+        if episode % INTERVAL_OF_UPDATE == 0:
+            Q_network.Education(self.Buffer, self.Q_target)
+
+        if done:
+            self.env.reset()
+
+            Graphics.add(self.episde_for_step, self.current_coplete_episode)
+            self.episde_for_step = 0
+
+Buffer = ReplayBuffer(capacity=50000)
+Q_network = Deep_Q_Network()
+Q_target = Deep_Q_Network()
+Graphics = Statistic()
+Env = Envinronment(ENV, Q_network, Q_target, Buffer)
+
+Q_target.load_state_dict(Q_network.state_dict())
+
+if RESET_PARAMETERS:
+    Q_network.Reset()
+    Q_target.Reset()
+
+for epoch in range(EPOCHS):
+    for episode in (pbar := tqdm(range(int(EPISODES/EPOCHS)))):
+        
+        progress = Env.step(episode+1)
+
+Graphics.show()
