@@ -1,198 +1,285 @@
-import gym
+# Импорт
 import torch
-from torch import nn, optim, tensor, randint
-from matplotlib import pyplot as plt
-#import numpy as np
+from torch import nn, optim, tensor
 
-from random import random, sample
-from collections import deque, namedtuple
+import numpy as np
+import gym
+
+import matplotlib.pyplot as plt
+from random import sample, random, randint
+from collections import deque
+
 from tqdm import tqdm
 
+# Создание среды
+env = gym.make('CartPole-v1', render_mode='human')
+
+# Сбрасывать ли параметры перед запуском
 RESET_PARAMETERS = True
 
+# Количество эпизодов (шагов) за выполнение кода
+EPISODES = 10000
+
+# Размер пакета и параметра TAU
 BATCH_SIZE = 128
-INTERVAL_OF_UPDATE = 100
-
-EPOCHS = 1
-EPISODES = 5000
-
 TAU = 0.005
 
-EPS_START = 0.95
-EPS_END = 0.0005
-EPS_DECAY = (EPS_START - EPS_END) / (1000)
+# Доля эпизодов на протяжении которых будет уменьшаться EPS
+EPS_EPISODES = 3/5
 
-ENV = gym.make("CartPole-v1")
+# Начальный и конечный эпсилон
+EPS = 0.995
+EPS_MIN = 0.0005
 
-INPUTS = ENV.observation_space.shape
-OUTPUTS = ENV.action_space.n
+# Формула для уменьшения эпсилона на протяжении определённого количество эпизодов
+EPS_DECAY = (EPS - EPS_MIN) / (EPS_EPISODES * EPISODES)
 
-Transition = namedtuple('Transition', ('state', 'action', 'reward', 'next_state'))
-
+#Создание буфера
 class ReplayBuffer:
-    def __init__(self, capacity):
-        self.memory = deque([], maxlen=capacity)
-
-    def push(self, *args):
-        self.memory.append(Transition(*args))
-
-    def sample_data(self):
-        batch = sample(self.memory, BATCH_SIZE)
-        batch = Transition(*zip(*batch))
-
-        return batch
+    def __init__(self, buffer_size):
+        '''Инициализация буфера'''
+        
+        self.memory = deque([], maxlen=buffer_size)
+    
+    def push(self, data):
+        '''Добавление данных в буффер'''
+        
+        self.memory.append(data)
+    
+    def sample_batch(self, batch_size):
+        '''Возвращает пакет данных в соответствии с параметром batch_size'''
+        
+        return sample(self.memory, batch_size)
     
     def __len__(self):
+        '''Возвращает кол-во пакетов в буфере'''
+        
         return len(self.memory)
 
-class Deep_Q_Network(nn.Module):
+# Инициализация Policy // Target - сети
+class Network(nn.Module):
     def __init__(self):
-
+        '''Инициализация Модели, функции потерь и оптимизатора. (И переменной с весами для отладки)'''
+        
         super().__init__()
+
         self.model = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(INPUTS[0], 128),
+            nn.Linear(env.observation_space.shape[0], 128),
             nn.ReLU(),
             nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(128, OUTPUTS)
-            ) 
+            nn.Linear(128, env.action_space.n)
+        )
 
-        self.loss_fn = nn.SmoothL1Loss()
-        self.optimizer = optim.AdamW(self.parameters(), lr=0.001, amsgrad=True)
+        # Для отладки (чтобы посмотреть веса если интересно)
+        bias = self.model.state_dict()
 
-        self.eps = EPS_START
+        self.loss_fn = nn.SmoothL1Loss() # Функция ошибки
+        self.optimizer = optim.AdamW(params=self.parameters(), lr=0.001, amsgrad=True) # Оптимизатор
     
-    def forward(self, X):
+    def forward(self, X=tensor):
+        '''Возвращает предсказание (pred) для выбора действия'''
+        
         return self.model(X)
-    
-    def Act(self, state):
-        self.eps = self.eps - EPS_DECAY if self.eps > EPS_END else self.eps
+
+# Инициализация Агента
+class Agent(Network):
+    def __init__(self):
+        '''
+            Инициализирует текущий эпсилон для последующего уменьшения, и 
+            вызывает родительский конструктор для использвания модели    
+                                                                            '''
+        super().__init__()
+
+        self.eps = EPS
+
+    def Action(self, state):
+        '''Принимает действие в соответствии с e-greedy (эпсилон_жадной) стратегией/политикой'''
+        
+        self.eps = self.eps - EPS_DECAY if self.eps > EPS_MIN else EPS_MIN
 
         if self.eps > random():
-            action = randint(0, 2, (1,))
-            return action
+            pred = tensor(randint(0, env.action_space.n-1))
+            return pred
         
         else:
-            return self.model(state.unsqueeze(0))
+            with torch.no_grad():
+                pred = self.forward(state).argmax()
+            return pred
     
-    def Education(self, Memory, Q_target_network):
-        if len(Memory) < BATCH_SIZE:
+    def Education(self, Buffer, Q_target):
+        '''Функция обучения для обновления весов policy-сети.
+           Запрашивает ваш буффер и target-сеть.             '''
+        
+        # Проверка достаточно ли пакетов данных для обучения
+        if len(Buffer) < BATCH_SIZE:
             return 
         
-        batch = Memory.sample_data()
+        self.model.train() # Перевод модели в режим обучения
 
-        non_final_mask = tensor(tuple(map(lambda x: x is not None, batch.next_state)), dtype=torch.bool)
-        non_final_next_states = torch.cat(tensor([s for s in batch.next_state if s is not None]))
+        batch = Buffer.sample_batch(BATCH_SIZE) # Получение пакета данных
 
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.cat(batch.action)
-        reward_batch = torch.cat(batch.reward)
+        obs, action, reward, next_obs, done = zip(*batch) # Распаковка
 
-        Q_targets = torch.zeros(BATCH_SIZE)
-        
+        # Преобразование в массивы NumPy и тензоры PyTorch
+        obs, action, reward, next_obs, done = np.array(obs), np.array(action), np.array(reward), np.array(next_obs), np.array(done)
+        obs, action, reward, next_obs, done = tensor(obs), tensor(action), tensor(reward), tensor(next_obs), tensor(done)
+
+        # Преобразование False и True, в 0 и 1 соответсвенно
+        done = tensor([i for i in map(lambda x: 1-int(x), done)])
+
         with torch.no_grad():
-            Q_targets[non_final_mask] = Q_target_network(non_final_next_states).max()
+            Q_of_next_states = Q_target(next_obs) # Вычисление Q-значений для следующих состояний
 
-        q_target = reward_batch + (0.99 * Q_targets)
-        action = self.model(state_batch).gather(1, action_batch)
+        Max_Q_values_next_states = Q_of_next_states.max(1)[0] # Выбор максимальных Q-значений следующиъ состояний
 
-        loss = self.loss_fn(action.squeeze(), q_target)
+        Q_value = reward + (0.99 * Max_Q_values_next_states) # Уравнение (Р.) Беллмана
 
-        self.optimizer.zero_grad()
+        Actions = self.forward(obs).gather(1, action.unsqueeze(1)) # Выбор Q-значений для текущих состояний(obs) в соответствии с действиями(action)
 
-        loss.backward()
+        loss = self.loss_fn(Actions, Q_value.unsqueeze(1)) # Вычисление ошибки с помощью функции ошибки
 
-        self.optimizer.step()
+        self.optimizer.zero_grad() # Сброс градиентов оптимизатора
 
-        target_net_state_dict = Q_target_network.state_dict()
-        policy_net_state_dict = self.state_dict()
+        loss.backward() # Обратное Распространение ошибки
 
-        for key in policy_net_state_dict:
-            target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
-        Q_target_network.load_state_dict(target_net_state_dict)
+        self.optimizer.step() # Смещение весов
+        
+        self.model.eval() # Перевод модели обратно в режим оценки
     
-    def Reset(self):
+    def Reset_parameters(self):
+        '''Просто функция для сброса параметров. (Выполняется если RESET_PARAMETERS = True'''
         for layer in self.model.children():
             if hasattr(layer, 'reset_parameters'):
                 layer.reset_parameters()
-
-class Statistic:
-    def __init__(self):
-        self.total_episods = []
-        self.episode_numbers = []
-
-        plt.ion()
-
-        plt.title("Total Reward Over Episodes")
-
-        plt.xlabel("Episodes")
-        plt.ylabel("Total Reward")
-
-    def add(self, total_episode, episode_number):
-        self.total_episods.append(total_episode)
-        self.episode_numbers.append(episode_number)
         
-        plt.clf()
-        plt.plot(self.episode_numbers, self.total_episods, color='b')
-        plt.pause(0.001)
+        '''
+            Я Хз как это работает
+                                    '''
 
-    def show(self):
-        plt.ioff()
-        plt.show()
+# Инициализация среды
+class Environment:
+    def __init__(self, Buffer, Q_target, Agent, Graphic):
+        '''Инициализирует переданные атрибуты, текущее состояние и переменную для отображения точности сети.'''
 
-class Envinronment:
-    def __init__(self, env, Q_Network, Q_target, Buffer):
-        self.env = env
-        
-        self.Q_Network = Q_Network
-        self.Q_target = Q_target
         self.Buffer = Buffer
+        self.Q_target = Q_target
+        self.Agent = Agent
+        self.Graphic = Graphic
 
-        self.obs = env.reset()[0]
+        self.obs, info = env.reset()
 
-        self.episde_for_step = 0
-        self.current_coplete_episode = 0
+        self.current_accuracy = 0
     
     def step(self, episode):
-        action = self.Q_Network.Act(tensor(self.obs)).argmax()
-        self.env.render()
+        '''Просто выполняет один шаг'''
 
-        next_state, reward, done, _, _ = self.env.step(action.item())
+        action = self.Agent.Action(tensor(self.obs)) # Передаёт состояние конвертированное в тензор в Action для совершения действия в соответствии с E-greedy стратегий/политикой
 
-        next_obs = None if done is True else next_state
+        next_obs, reward, done, _, _ = env.step(action.item()) # Выполняем шаг
 
-        self.Buffer.push(self.obs, action, reward, next_obs)
+        env.render() # Рендер
 
-        self.obs = next_state
+        data_for_return = [self.obs, action, reward, done] # Пакет для отображения в progress_bar от tqdm
 
-        self.episde_for_step += 1
-        self.current_coplete_episode += 1
+        self.Buffer.push([self.obs, action, reward, next_obs, done]) # Передаём (другой) пакет в буффер для последующего обучения сети
 
-        if episode % INTERVAL_OF_UPDATE == 0:
-            Q_network.Education(self.Buffer, self.Q_target)
+        self.obs = next_obs # обновляем текущее состояние
 
-        if done:
-            self.env.reset()
+        self.current_accuracy += 1 # Добавляем +1 в переменную для отображения того сколько агент продержался не уронив шест
 
-            Graphics.add(self.episde_for_step, self.current_coplete_episode)
-            self.episde_for_step = 0
+        if done: # Если агент проиграл
+            env.reset() # Сброс состояния
 
-Buffer = ReplayBuffer(capacity=50000)
-Q_network = Deep_Q_Network()
-Q_target = Deep_Q_Network()
-Graphics = Statistic()
-Env = Envinronment(ENV, Q_network, Q_target, Buffer)
+            self.Graphic.add(episode+1, self.current_accuracy) # Обновление графика
+            self.current_accuracy = 0 # Обнуление перменной точности
 
-Q_target.load_state_dict(Q_network.state_dict())
+        if (episode+1) % 10: # Каждый 10-ый эпизод
+            self.Agent.Education(self.Buffer, self.Q_target) # Обучение сети
 
+        if (episode+1) % 20: # Каждый 20-ый эпизод
+            target_net_state_dict = self.Q_target.state_dict()
+            policy_net_state_dict = self.Agent.state_dict()
+
+            for key in policy_net_state_dict:
+                target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+                self.Q_target.load_state_dict(target_net_state_dict)
+
+            ''' Происходит "Мягкое обновление целевой (target) сети" '''
+
+        return data_for_return # Возвращаем тот самый пакет для отображения в Progress_bar
+
+# Инициализиация класса для отображения результата
+class Graphic:
+    def __init__(self, x=str, y=str, title=str):
+        '''Создает интерактивное окно для графика'''
+        plt.ion() # InteractiveON (Интерактив Включён)
+
+        plt.xlabel(x) # x-шкала
+        plt.ylabel(y) # y-шкала
+        plt.title(title) # title-заголовок
+
+        self.accuracy_list = [] # Список для точности на графике
+        self.episodes_list = [] # Список для эпизодов на графике
+
+    def add(self, x, y):
+        '''Обновляет ваш график'''
+        self.episodes_list.append(x) # Добалвяет переданный текущий эпизод
+        self.accuracy_list.append(y) # Добавляет переданную текущую переменную точности
+
+        plt.clf() # Отчищает график
+        plt.plot(self.episodes_list, self.accuracy_list) # Создаёт линию графика
+        plt.pause(0.005) # Задержка для отображения
+    
+    def show(self, new_title=str):
+        '''Отображает ваш график по завершению программы'''
+
+        plt.ioff() # InteractiveOFF (Интерактив Выключен)
+
+        plt.title(new_title) # Обновлённый заголовок
+
+        plt.clf() # Отчищает график
+        plt.plot(self.episodes_list, self.accuracy_list) # Создаёт единную линию на графике
+
+        plt.show() # Отображает конечный результат
+
+# Инициализация: Графика, буфера, Policy и Target сетей, копирует веса основной сети в целевую, инициализиурет Агента и среду 
+Graphic = Graphic(x='Episodes',
+                  y='Accuracy',
+                  title='Graphic of Accuracy on episode'
+)
+
+Buffer = ReplayBuffer(buffer_size=2500)
+
+Q_policy = Network()
+Q_target = Network()
+
+Q_target.load_state_dict(Q_policy.state_dict())
+
+Agent = Agent()
+
+Environment = Environment(Buffer=Buffer, 
+                          Q_target=Q_target, 
+                          Agent=Agent, 
+                          Graphic=Graphic
+)
+
+# Если мы сбрасываем параметры при запуске программы
 if RESET_PARAMETERS:
-    Q_network.Reset()
-    Q_target.Reset()
 
-for epoch in range(EPOCHS):
-    for episode in (pbar := tqdm(range(int(EPISODES/EPOCHS)))):
-        
-        progress = Env.step(episode+1)
+    Agent.Reset_parameters() # Вызываем функцию для сброса параметров
+    Q_target.load_state_dict(Q_policy.state_dict()) # Копируем новые параметры после сброса
 
-Graphics.show()
+# Создаём pbar 
+for episode in (pbar := tqdm(range(EPISODES))):
+
+    obs, action, reward, done = Environment.step(episode) # Распаковыем data_for_return
+
+    obs = ", ".join([f"{i: .6f}" for i in obs]) # Разделяем все данные состояния запятой (", ") и отображем только первые 6 цифр каждого значения состояния
+
+    # Отображаем: состояние, действие, награду (всегда 1), и ' True' (с пробелом) если done это True, и 'False' без пробела в ином случае, для того чтобы линия прогресса не "дёргалась"
+    pbar.set_description(f"|| [{obs}] || {action} || {reward} || {' True' if done else 'False'} ||")
+
+env.close() # Закрываем среду после завершения цикла
+
+Graphic.show(new_title='Result') # Отображаем конечный график и передаём новый заголовок
