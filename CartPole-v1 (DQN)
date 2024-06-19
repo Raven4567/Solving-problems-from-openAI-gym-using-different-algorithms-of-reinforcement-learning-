@@ -18,21 +18,20 @@ env = gym.make('CartPole-v1', render_mode='human')
 RESET_PARAMETERS = True
 
 # Количество эпизодов (шагов) за выполнение кода
-EPISODES = 10000
+EPISODES = 600
 
 # Размер пакета и параметра TAU
 BATCH_SIZE = 128
 TAU = 0.005
 
-# Доля эпизодов на протяжении которых будет уменьшаться EPS
-EPS_EPISODES = 3/5
-
 # Начальный и конечный эпсилон
-EPS = 0.995
+EPS = 1.0
 EPS_MIN = 0.0005
 
-# Формула для уменьшения эпсилона на протяжении определённого количество эпизодов
-EPS_DECAY = (EPS - EPS_MIN) / (EPS_EPISODES * EPISODES)
+# Формула для экспоненциального уменьшения эпсилона
+EPS_DECAY = EPS_MIN ** (1/EPISODES)
+
+CURRENT_EPS = EPS # Инициализация текущего эпсилона
 
 #Создание буфера
 class ReplayBuffer:
@@ -71,9 +70,6 @@ class Network(nn.Module):
             nn.Linear(128, env.action_space.n)
         )
 
-        # Для отладки (чтобы посмотреть веса если интересно)
-        bias = self.model.state_dict()
-
         self.loss_fn = nn.SmoothL1Loss() # Функция ошибки
         self.optimizer = optim.AdamW(params=self.parameters(), lr=0.001, amsgrad=True) # Оптимизатор
     
@@ -95,10 +91,8 @@ class Agent(Network):
 
     def Action(self, state):
         '''Принимает действие в соответствии с e-greedy (эпсилон_жадной) стратегией/политикой'''
-        
-        self.eps = self.eps - EPS_DECAY if self.eps > EPS_MIN else EPS_MIN
-
-        if self.eps > random():
+     
+        if CURRENT_EPS > random():
             pred = tensor(randint(0, env.action_space.n-1))
             return pred
         
@@ -133,7 +127,7 @@ class Agent(Network):
 
         Max_Q_values_next_states = Q_of_next_states.max(1)[0] # Выбор максимальных Q-значений следующиъ состояний
 
-        Q_value = reward + (0.99 * Max_Q_values_next_states) # Уравнение (Р.) Беллмана
+        Q_value = reward + (0.99 * Max_Q_values_next_states * done) # Уравнение (Р.) Беллмана
 
         Actions = self.forward(obs).gather(1, action.unsqueeze(1)) # Выбор Q-значений для текущих состояний(obs) в соответствии с действиями(action)
 
@@ -167,47 +161,49 @@ class Environment:
         self.Agent = Agent
         self.Graphic = Graphic
 
-        self.obs, info = env.reset()
-
         self.current_accuracy = 0
     
-    def step(self, episode):
-        '''Просто выполняет один шаг'''
+    def step(self, episode, pbar):
+        '''Просто выполняет один эпизод'''
+        
+        obs, info = env.reset()
 
-        action = self.Agent.Action(tensor(self.obs)) # Передаёт состояние конвертированное в тензор в Action для совершения действия в соответствии с E-greedy стратегий/политикой
+        while 600:
+            action = self.Agent.Action(tensor(obs)) # Передаёт состояние конвертированное в тензор в Action для совершения действия в соответствии с E-greedy стратегий/политикой
 
-        next_obs, reward, done, _, _ = env.step(action.item()) # Выполняем шаг
+            next_obs, reward, done, _, _ = env.step(action.item()) # Выполняем шаг
 
-        env.render() # Рендер
+            env.render() # Рендер
 
-        data_for_return = [self.obs, action, reward, done] # Пакет для отображения в progress_bar от tqdm
+            # Отображаем: состояние, действие, награду (всегда 1), и ' True' (с пробелом) если done это True, и 'False' без пробела в ином случае, для того чтобы линия прогресса не "дёргалась"
+            pbar.set_description(f"|| [{obs[0]: .6f}, {obs[1]: .6f}, {obs[2]: .6f}, {obs[3]: .6f}] || {action}, {CURRENT_EPS: .5f} || {reward} || {' True' if done else 'False'} ||")
 
-        self.Buffer.push([self.obs, action, reward, next_obs, done]) # Передаём (другой) пакет в буффер для последующего обучения сети
+            self.Buffer.push([obs, action, reward, next_obs, done]) # Передаём (другой) пакет в буффер для последующего обучения сети
 
-        self.obs = next_obs # обновляем текущее состояние
+            obs = next_obs # обновляем текущее состояние
 
-        self.current_accuracy += 1 # Добавляем +1 в переменную для отображения того сколько агент продержался не уронив шест
+            self.current_accuracy += 1 # Добавляем +1 в переменную для отображения того сколько агент продержался не уронив шест
 
-        if done: # Если агент проиграл
-            env.reset() # Сброс состояния
+            if (episode+1) % 10: # Каждый 10-ый эпизод
+                self.Agent.Education(self.Buffer, self.Q_target)
 
-            self.Graphic.add(episode+1, self.current_accuracy) # Обновление графика
-            self.current_accuracy = 0 # Обнуление перменной точности
+                ''' Происходит "обновление основной (policy) сети" '''
 
-        if (episode+1) % 10: # Каждый 10-ый эпизод
-            self.Agent.Education(self.Buffer, self.Q_target) # Обучение сети
+            if (episode+1) % 20: # Каждый 20-ый эпизод
+                target_net_state_dict = self.Q_target.state_dict()
+                policy_net_state_dict = self.Agent.state_dict()
 
-        if (episode+1) % 20: # Каждый 20-ый эпизод
-            target_net_state_dict = self.Q_target.state_dict()
-            policy_net_state_dict = self.Agent.state_dict()
+                for key in policy_net_state_dict:
+                    target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
+                    self.Q_target.load_state_dict(target_net_state_dict)
 
-            for key in policy_net_state_dict:
-                target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
-                self.Q_target.load_state_dict(target_net_state_dict)
-
-            ''' Происходит "Мягкое обновление целевой (target) сети" '''
-
-        return data_for_return # Возвращаем тот самый пакет для отображения в Progress_bar
+                ''' Происходит "Мягкое обновление целевой (target) сети" '''
+            
+            if done: # Если агент проиграл
+                break # Выход из цикла эпизода
+        
+        self.Graphic.add(episode+1, self.current_accuracy) # Обновление графика
+        self.current_accuracy = 0 # Обнуление перменной точности
 
 # Инициализиация класса для отображения результата
 class Graphic:
@@ -224,8 +220,8 @@ class Graphic:
 
     def add(self, x, y):
         '''Обновляет ваш график'''
-        self.episodes_list.append(x) # Добалвяет переданный текущий эпизод
         self.accuracy_list.append(y) # Добавляет переданную текущую переменную точности
+        self.episodes_list.append(x) # Добавляет переданную текущую переменную т. эпизода
 
         plt.clf() # Отчищает график
         plt.plot(self.episodes_list, self.accuracy_list) # Создаёт линию графика
@@ -246,8 +242,7 @@ class Graphic:
 # Инициализация: Графика, буфера, Policy и Target сетей, копирует веса основной сети в целевую, инициализиурет Агента и среду 
 Graphic = Graphic(x='Episodes',
                   y='Accuracy',
-                  title='Graphic of Accuracy on episode'
-)
+                  title='Graphic of Accuracy on episode')
 
 Buffer = ReplayBuffer(buffer_size=2500)
 
@@ -273,12 +268,9 @@ if RESET_PARAMETERS:
 # Создаём pbar 
 for episode in (pbar := tqdm(range(EPISODES))):
 
-    obs, action, reward, done = Environment.step(episode) # Распаковыем data_for_return
+    Environment.step(episode, pbar) # Выполняем 1 эпизод
 
-    obs = ", ".join([f"{i: .6f}" for i in obs]) # Разделяем все данные состояния запятой (", ") и отображем только первые 6 цифр каждого значения состояния
-
-    # Отображаем: состояние, действие, награду (всегда 1), и ' True' (с пробелом) если done это True, и 'False' без пробела в ином случае, для того чтобы линия прогресса не "дёргалась"
-    pbar.set_description(f"|| [{obs}] || {action} || {reward} || {' True' if done else 'False'} ||")
+    CURRENT_EPS = CURRENT_EPS * EPS_DECAY if CURRENT_EPS > EPS_MIN else EPS_MIN # Уменьшение эпсилона если он больше минимального
 
 env.close() # Закрываем среду после завершения цикла
 
