@@ -1,3 +1,6 @@
+'''
+Импортируем библиотеки: gym, numpy, matplotlib.pyplot, tqdm и подклассы random.
+                                                                                '''
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
@@ -5,68 +8,77 @@ from tqdm import tqdm
 
 from random import random, randint
 
-env = gym.make('Taxi-v3')
+env = gym.make('Taxi-v3') # Создаём среду Taxi-v3
 
-plt.ion()
+plt.ion() # Включаем интерактивное окно для графиков
 
-plt.figure(1)
+plt.figure(1) # Создаём figure с номером 1 
 
+# Редактируем Заголовок, и определяем название осей x и y
 plt.xlabel('Episodes')
 plt.ylabel('Accuracy')
 plt.title('In Progress...')
 
-action_space = env.action_space.n
-observation_space = env.observation_space.n
+action_space = env.action_space.n # Количество дискретных действий
+observation_space = env.observation_space.n # Количество дискретных состояний
 
+# Создаём таблицу и заполняем её случайными числами от 0 до 0.4, для лучшего исследования среды
 Q_table = np.random.uniform(low=0, high=0.4, size=(observation_space, action_space))
 
-episodes_list = []
-accuracy_list = []
+episodes_list = [] # Список эпизодов
+accuracy_list = [] # Список общих наград за эпизоды
 
-EPISODES = 600
+EPISODES = 600 # Кол-во эпизодов
 
-LR = 0.005
-GAMMA = 0.99
+LR = 0.005 # Скорость обучения
+GAMMA = 0.99 # Дисконтный фактор
 
-EPS = 1.0
-EPS_MIN = 0.05
-EPS_DECAY = EPS_MIN ** (1/EPISODES)
+EPS = 1.0 # Начальный эпсилон
+EPS_MIN = 0.05 # Конечный эпсилон
+EPS_DECAY = EPS_MIN ** (1/EPISODES) # Формула экпоненциального уменьшения эпсилона
 
+# Создаём цикл с pbar (т. е. шкалой прогресса) 
 for episode in (pbar := tqdm(range(EPISODES))):
-    obs, info = env.reset()
+    obs, info = env.reset() # Получаем начальное состояние среды
 
-    total_reward = 0
+    total_reward = 0 # Общая награда за эпизод
     while True:
+        # Действие в соответствии e-greedy политикой
         action = randint(0, action_space-1) if EPS > random() else np.argmax(Q_table[obs])
 
-        next_obs, reward, done, _, _ = env.step(action)
+        next_obs, reward, done, _, _ = env.step(action) # Делаем шаг
 
+        # Обновляем шкалу прогресса
         pbar.set_description(f"obs: {obs} || action: {action}, eps: {EPS: .4f} || reward: {reward}, done: {done}")
 
+        # Обновление Q-таблицы
         Q_table[obs, action] += LR * (reward + GAMMA * np.max(Q_table[next_obs]) - Q_table[obs, action])
 
-        total_reward += reward
-        obs = next_obs
+        total_reward += reward # Прибавляем награду к общей награде 
+        obs = next_obs # обновляем состояние
 
-        if done:
-            episodes_list.append(episode)
-            accuracy_list.append(total_reward)
+        if done: # Если состояние конечное
+            episodes_list.append(episode) # Добавляем текущий эпизод в список
+            accuracy_list.append(total_reward) # Добалвяем общую награду (точность) в список
 
-            break
+            break # Выходим из цикла
     
-    EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN
+    EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN # Уменьшаем эпсилон
 
-    plt.clf()
-    plt.plot(episodes_list, accuracy_list)
-    plt.pause(0.001)
+    plt.clf() # Отчищаем окно графика
+    plt.plot(episodes_list, accuracy_list) # Создаём линию графика
+    plt.pause(0.001) # Задержка
 
-plt.ioff()
+plt.ioff() # После окончания цикла обучения, мы выключаем интерактивное окно 
 
-plt.title('Result')
+plt.title('Result') # Переименовываем заголовок
 
+# Отчищаем окно и создаём новый график
 plt.clf()
 plt.plot(episodes_list, accuracy_list)
 
+# Отоброжаем конечный график
 plt.show()
 
 env.close()
+# Закрываем среду
