@@ -1,0 +1,72 @@
+import gym
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+from random import random, randint
+
+env = gym.make('Taxi-v3')
+
+plt.ion()
+
+plt.figure(1)
+
+plt.xlabel('Episodes')
+plt.ylabel('Accuracy')
+plt.title('In Progress...')
+
+action_space = env.action_space.n
+observation_space = env.observation_space.n
+
+Q_table = np.random.uniform(low=0, high=0.4, size=(observation_space, action_space))
+
+episodes_list = []
+accuracy_list = []
+
+EPISODES = 600
+
+LR = 0.005
+GAMMA = 0.99
+
+EPS = 1.0
+EPS_MIN = 0.05
+EPS_DECAY = EPS_MIN ** (1/EPISODES)
+
+for episode in (pbar := tqdm(range(EPISODES))):
+    obs, info = env.reset()
+
+    total_reward = 0
+    while True:
+        action = randint(0, action_space-1) if EPS > random() else np.argmax(Q_table[obs])
+
+        next_obs, reward, done, _, _ = env.step(action)
+
+        pbar.set_description(f"obs: {obs} || action: {action}, eps: {EPS: .4f} || reward: {reward}, done: {done}")
+
+        Q_table[obs, action] += LR * (reward + GAMMA * np.max(Q_table[next_obs]) - Q_table[obs, action])
+
+        total_reward += reward
+        obs = next_obs
+
+        if done:
+            episodes_list.append(episode)
+            accuracy_list.append(total_reward)
+
+            break
+    
+    EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN
+
+    plt.clf()
+    plt.plot(episodes_list, accuracy_list)
+    plt.pause(0.001)
+
+plt.ioff()
+
+plt.title('Result')
+
+plt.clf()
+plt.plot(episodes_list, accuracy_list)
+
+plt.show()
+
+env.close()
