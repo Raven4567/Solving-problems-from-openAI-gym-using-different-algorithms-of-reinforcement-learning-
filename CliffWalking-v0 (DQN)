@@ -10,7 +10,6 @@ from collections import deque
 from tqdm import tqdm
 
 env = gym.make('CliffWalking-v0')
-env_render = gym.make('CliffWalking-v0', render_mode='human')
 
 RESET_PARAMETERS = True
 
@@ -18,9 +17,9 @@ EPISODES = 600
 
 MAX_LEN = 100000
 
-TAU = 0.005
 BATCH_SIZE = 128
 
+TAU = 0.005
 GAMMA = 0.99
 LR = 0.1
 
@@ -213,9 +212,6 @@ if RESET_PARAMETERS:
 
 for episode in (pbar := tqdm(range(EPISODES))):
     step(pbar)
-
-    if (episode+1) == (EPISODES-10):
-        env = env_render
 
 env.close()
 
