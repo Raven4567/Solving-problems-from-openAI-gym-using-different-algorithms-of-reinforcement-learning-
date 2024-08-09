@@ -1,133 +1,143 @@
 import torch
 from torch import nn, optim, tensor
-
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
-
 from random import random, sample
 from collections import deque
 from tqdm import tqdm
 
+# Создаем окружение Gym для задачи Taxi
 env = gym.make('Taxi-v3')
 
-RESET_PARAMETERS = True
+# Параметры обучения и гиперпараметры
+EPISODES = 600             # Количество эпизодов обучения
+MAX_LEN = 100000           # Максимальная длина буфера воспроизведения
+BATCH_SIZE = 128           # Размер мини-батча для обучения
+TAU = 0.0005               # Коэффициент для мягкого обновления целевой сети
+GAMMA = 0.99               # Коэффициент дисконтирования
+LR = 0.005                 # Скорость обучения
 
-EPISODES = 600
+# Параметры для ε-жадной политики
+EPS = 1.0                  # Начальное значение ε
+EPS_MIN = 0.005            # Минимальное значение ε
+EPS_DECAY = EPS_MIN ** (1/EPISODES)  # Коэффициент затухания ε
 
-MAX_LEN = 100000
-
-BATCH_SIZE = 128
-
-TAU = 0.0005
-GAMMA = 0.99
-LR = 0.005
-
-EPS = 1.0
-EPS_MIN = 0.005
-EPS_DECAY = EPS_MIN ** (1/EPISODES)
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # Использовать GPU если доступен
 
 print(device)
 
 class ReplayBuffer:
+    """Класс для буфера воспроизведения опыта."""
     def __init__(self, maxlen: int):
         self.memory = deque([], maxlen=maxlen)
     
     def push(self, data: list):
+        """Добавить новый опыт в буфер."""
         self.memory.append(data)
     
     def sample_data(self, batch_size: int):
+        """Выбрать случайный мини-батч данных из буфера."""
         return sample(self.memory, batch_size)
 
     def __len__(self):
         return len(self.memory)
 
 class Network(nn.Module):
+    """Нейронная сеть для обучения агента."""
     def __init__(self):
         super().__init__()
 
         self.model = nn.Sequential(
-            nn.Linear(1, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 6),
+            nn.Linear(1, 128),    # Входной слой с 1 нейроном
+            nn.ReLU(),            # Функция активации ReLU
+            nn.Linear(128, 128),  # Скрытый слой с 128 нейронами
+            nn.ReLU(),            # Функция активации ReLU
+            nn.Linear(128, 6),    # Выходной слой с 6 нейронами (число действий)
         )
         
-        self.loss_fn = nn.SmoothL1Loss()
-        self.optimizer = optim.AdamW(self.parameters(), lr=LR, amsgrad=True)
+        self.loss_fn = nn.SmoothL1Loss()  # Функция потерь
+        self.optimizer = optim.AdamW(self.parameters(), lr=LR, amsgrad=True)  # Оптимизатор
 
         self.to(device)
 
     def forward(self, X: tensor):
+        """Прямой проход через сеть."""
         pred = self.model(X)
-        
         return pred
-    
+
 class Agent(Network):
+    """Агент, использующий нейронную сеть для выбора действий и обучения."""
     def __init__(self):
         super().__init__()
 
     def Action(self, obs: tensor):
+        """Выбрать действие согласно ε-жадной стратегии."""
         if EPS > random():
+            # Случайное действие
             action = env.action_space.sample()
-            return action
-        
         else:
+            # Действие, максимизирующее Q-значение
             with torch.no_grad():
                 action = self.forward(obs).argmax().item()
-            return action
+        return action
     
     def Education(self, Buffer, Q_target):
+        """Обучение сети на основе данных из буфера воспроизведения."""
         if len(Buffer) < BATCH_SIZE:
             return 
-            
-        self.train()
+        
+        self.train()  # Переключаемся в режим обучения
         
         batch = Buffer.sample_data(BATCH_SIZE)
 
         obs, action, reward, next_obs = zip(*batch)
 
-        obs, action, reward, next_obs = np.array(obs), np.array(action), np.array(reward), np.array(next_obs)
-        obs, action, reward, next_obs = tensor(obs, dtype=torch.float32, device=device), tensor(action, dtype=torch.int64, device=device), tensor(reward, device=device), tensor(next_obs, dtype=torch.float32, device=device)
+        # Преобразуем данные в тензоры
+        obs = tensor(np.array(obs), dtype=torch.float32, device=device)
+        action = tensor(np.array(action), dtype=torch.int64, device=device)
+        reward = tensor(np.array(reward), device=device)
+        next_obs = tensor(np.array(next_obs), dtype=torch.float32, device=device)
 
+        # Вычисляем целевые Q-значения
         with torch.no_grad():
             Q_value_of_next_states = Q_target(next_obs)
         Max_Q_values = Q_value_of_next_states.max(1)[0]
-        
         Target_Q_value = reward + GAMMA * Max_Q_values
-        Q_value = self.forward(obs).gather(1, action.unsqueeze(1)).squeeze(1)
 
+        # Вычисляем текущее Q-значение и функцию потерь
+        Q_value = self.forward(obs).gather(1, action.unsqueeze(1)).squeeze(1)
         loss = self.loss_fn(Q_value, Target_Q_value)
 
+        # Обновляем параметры сети
         self.optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_value_(self.parameters(), 10)
+        nn.utils.clip_grad_value_(self.parameters(), 10)  # Ограничение градиентов
         self.optimizer.step()
 
-        self.eval()
+        self.eval()  # Переключаемся в режим оценки
     
     def soft_update(self, Q_target, Q_policy):
+        """Мягкое обновление целевой сети."""
         policy_state_dict = Q_policy.state_dict()
         target_state_dict = Q_target.state_dict()
 
         for key in policy_state_dict:
-            target_state_dict[key] = policy_state_dict[key]*TAU + target_state_dict[key]*(1-TAU)
+            target_state_dict[key] = policy_state_dict[key] * TAU + target_state_dict[key] * (1 - TAU)
         Q_target.load_state_dict(target_state_dict)
 
     def Reset_parameters(self):
+        """Сброс параметров сети."""
         for param in self.model.children():
             if hasattr(param, 'reset_parameters'):
                 param.reset_parameters()
 
 class Graphic:
+    """Класс для визуализации графиков."""
     def __init__(self, x: str, y: str, title: str):
-        plt.ion()
+        plt.ion()  # Включаем интерактивный режим
 
         plt.figure(1)
-
         plt.xlabel(x)
         plt.ylabel(y)
         plt.title(title)
@@ -136,24 +146,23 @@ class Graphic:
         self.list_of_accuracy = []
 
     def update(self, episode: int, accuracy: int):
+        """Обновление графика."""
         self.list_of_episodes.append(episode)
         self.list_of_accuracy.append(accuracy)
-
-        plt.clf()
+        plt.clf()  # Очистка текущего графика
         plt.plot(self.list_of_episodes, self.list_of_accuracy)
-        plt.pause(0.001)
+        plt.pause(0.001)  # Пауза для обновления графика
     
     def show(self, new_title: int):
-        plt.ioff()
-
+        """Отображение окончательного графика."""
+        plt.ioff()  # Отключаем интерактивный режим
         plt.title(new_title)
-
         plt.clf()
         plt.plot(self.list_of_episodes, self.list_of_accuracy)
-
         plt.show()
 
 def step(pbar):
+    """Шаг обучения агента."""
     global EPS
 
     obs, info = env.reset()
@@ -166,16 +175,17 @@ def step(pbar):
 
         next_obs, reward, done, _, _ = env.step(action)
 
-        #env.render()
+        #env.render()  # Опционально: для визуализации действий агента в окружении
 
         pbar.set_description(f"Obs: {obs} || Action: {action}, EPS: {EPS: .3f} || reward: {reward}, done: {done}")
 
         Buffer.push([[obs], action, reward, [next_obs]])
 
-        if (steps+1) % 5 == 0:
+        # Обучение и обновление сети
+        if (steps + 1) % 5 == 0:
             Agent.Education(Buffer, Q_target)
         
-        if (steps+1) % 100 == 0:
+        if (steps + 1) % 100 == 0:
             Agent.soft_update(Q_target, Q_policy)
 
         obs = next_obs
@@ -186,33 +196,23 @@ def step(pbar):
         if done:
             break
 
+    # Обновление значения ε
     EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN
 
     Graphic.update(episode, reward_per_episode)
 
+# Инициализация буфера, сети и агента
 Buffer = ReplayBuffer(MAX_LEN)
-
 Q_policy = Network()
 Q_target = Network()
-
 Q_target.load_state_dict(Q_policy.state_dict())
-
 Agent = Agent()
+Graphic = Graphic(x='episodes', y='accuracy', title='In progress...')
 
-Graphic = Graphic(
-    x='episodes',
-    y='accuracy',
-    title='In progress...'
-)
-
-if RESET_PARAMETERS:
-    Agent.Reset_parameters()
-
-    Q_target.load_state_dict(Q_policy.state_dict())
-
+# Основной цикл обучения
 for episode in (pbar := tqdm(range(EPISODES))):
     step(pbar)
 
+# Закрытие окружения и отображение графика
 env.close()
-
 Graphic.show(new_title='Result')
