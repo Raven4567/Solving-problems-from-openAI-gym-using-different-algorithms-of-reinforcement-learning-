@@ -11,7 +11,6 @@ from tqdm import tqdm
 env = gym.make('CliffWalking-v0')
 
 # Параметры обучения и гиперпараметры
-RESET_PARAMETERS = True
 EPISODES = 600
 MAX_LEN = 100000
 BATCH_SIZE = 128
@@ -115,12 +114,6 @@ class Agent(Network):
             target_state_dict[key] = policy_state_dict[key] * TAU + target_state_dict[key] * (1 - TAU)
         Q_target.load_state_dict(target_state_dict)
 
-    def Reset_parameters(self):
-        # Сброс параметров сети
-        for param in self.model.children():
-            if hasattr(param, 'reset_parameters'):
-                param.reset_parameters()
-
 class Graphic:
     def __init__(self, x: str, y: str, title: str):
         plt.ion()
@@ -197,11 +190,6 @@ Q_target = Network()
 Q_target.load_state_dict(Q_policy.state_dict())
 Agent = Agent()
 Graphic = Graphic(x='episodes', y='accuracy', title='In progress...')
-
-# Сброс параметров сети, если указано
-if RESET_PARAMETERS:
-    Agent.Reset_parameters()
-    Q_target.load_state_dict(Q_policy.state_dict())
 
 # Основной цикл обучения
 for episode in (pbar := tqdm(range(EPISODES))):
