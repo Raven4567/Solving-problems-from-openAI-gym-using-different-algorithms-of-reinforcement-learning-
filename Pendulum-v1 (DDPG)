@@ -7,169 +7,161 @@ import gym
 from random import sample
 from tqdm import tqdm
 
-# Create the environment for the 'Pendulum-v1' task
+# Create the environment for training
 env = gym.make('Pendulum-v1')
-env_render = gym.make('Pendulum-v1', render_mode='human')  # Environment for rendering
+env_render = gym.make('Pendulum-v1', render_mode='human')
 
-EPISODES = 200  # Number of training episodes
+# Define the dimensions of action and observation spaces
+action_space = env.action_space.shape[0]
+observ_space = env.observation_space.shape[0]
 
-BATCH_SIZE = 128  # Batch size for training
-MAXLEN = 100000  # Max size of the replay buffer
+# Training parameters
+EPISODES = 200
+BATCH_SIZE = 128
+MAXLEN = 100000
+TAU = 0.005
+GAMMA = 0.99
 
-TAU = 0.005  # Soft update factor for target networks
-GAMMA = 0.99  # Discount factor for future rewards
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # Use GPU if available
+# Select the device for computation (GPU or CPU)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class ReplayBuffer:
-    """Replay buffer to store and sample experiences."""
     def __init__(self, maxlen: int):
         self.memory = deque([], maxlen=maxlen)
     
     def push(self, data: list):
-        """Add a new experience to the buffer."""
+        # Add new experience to the buffer
         self.memory.append(data)
 
     def sample_batch(self, batch_size: int):
-        """Sample a batch of experiences from the buffer."""
+        # Sample a batch of data from the buffer
         return sample(self.memory, batch_size)
     
     def __len__(self):
         return len(self.memory)
 
 class ActorNetwork(nn.Module):
-    """Actor network responsible for choosing actions."""
     def __init__(self):
         super().__init__()
 
+        # Define the actor network
         self.model = nn.Sequential(
-            nn.Linear(11, 128),  # Input layer with 11 neurons (observation space)
+            nn.Linear(observ_space, 128),
             nn.ReLU(),
-            nn.Linear(128, 128),  # Hidden layer with 128 neurons
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(128, 1),  # Output layer with 1 neuron (action)
-            nn.Tanh()  # Use Tanh to ensure actions are within [-1, 1] range
+            nn.Linear(128, action_space),
+            nn.Tanh()
         )
     
         self.to(device)
 
     def forward(self, obs: tensor):
-        """Forward pass through the actor network."""
+        # Forward pass through the actor network
         pred = self.model(obs)
         return pred
 
 class CriticNetwork(nn.Module):
-    """Critic network responsible for evaluating action-value pairs."""
     def __init__(self):
         super().__init__()
 
+        # Define the critic network
         self.model = nn.Sequential(
-            nn.Linear(12, 128),  # Input layer with 12 neurons (observation + action)
+            nn.Linear(observ_space + action_space, 128),
             nn.ReLU(),
-            nn.Linear(128, 128),  # Hidden layer with 128 neurons
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(128, 1)  # Output layer to predict Q-value
+            nn.Linear(128, action_space)
         )
 
         self.to(device)
     
     def forward(self, obs: tensor, action: tensor):
-        """Forward pass through the critic network. Concatenates observation and action."""
-        obs = torch.cat([obs, action], dim=1)  # Combine observation and action
+        # Concatenate observations and actions and forward pass through the critic network
+        obs = torch.cat([obs, action], dim=1)
         pred = self.model(obs)
         return pred
 
 class DDPG:
-    """Deep Deterministic Policy Gradient (DDPG) agent."""
     def __init__(self):
-        # Optimizers for actor and critic networks
+        # Define optimizers and loss functions
         self.actor_optimizer = optim.AdamW(Actor.parameters(), lr=0.0005, amsgrad=True)
         self.critic_optimizer = optim.AdamW(Critic.parameters(), lr=0.005, amsgrad=True)
+        self.loss_fn = nn.SmoothL1Loss()
 
-        self.loss_fn = nn.SmoothL1Loss()  # Huber loss function for critic network
-
-        # Ornstein-Uhlenbeck process parameters for exploration noise
+        # Parameters for noise (OUNoise)
         self.mu = 0.0
         self.theta = 0.15
         self.sigma = 0.2
         self.current_noise = 0.0
     
     def action(self, obs: tensor):
-        """Select an action using the actor network and apply noise for exploration."""
+        # Select an action with added noise
         with torch.no_grad():
-            action = Actor(obs)  # Get action from the actor network
-        noise = self.OUNoise()  # Add noise for exploration
-
+            action = Actor(obs)
+        noise = self.OUNoise()
         action += noise
-        return np.clip(np.array([action.item()]), -2, 2)  # Clip action within bounds
+        return np.clip(np.array([action.item()]), -2, 2)
     
     def OUNoise(self):
-        """Generate noise using Ornstein-Uhlenbeck process."""
+        # Generate noise using the Ornstein-Uhlenbeck process
         dx = self.theta * (self.mu - self.current_noise) + self.sigma * np.random.randn()
         self.current_noise += dx
         return self.current_noise
     
     def education(self):
-        """Train the agent using experiences from the replay buffer."""
+        # Train the actor and critic networks
         if len(Buffer) < BATCH_SIZE:
             return 
         
-        # Sample a batch of experiences
         batch = Buffer.sample_batch(BATCH_SIZE)
         obs, action, reward, next_obs, done = zip(*batch)
         
+        # Convert data to tensors
         obs = tensor(np.array(obs), dtype=torch.float32, device=device)
         action = tensor(np.array(action), dtype=torch.float32, device=device)
         reward = tensor(np.array(reward), dtype=torch.float32, device=device)
         next_obs = tensor(np.array(next_obs), dtype=torch.float32, device=device)
-        
-        # Convert done flags to integers (1 for not done, 0 for done)
-        done = tensor(np.array([i for i in map(lambda x: 1-int(x), done)]), device=device)
+        done = tensor(np.array([1 - int(x) for x in done]), device=device)
 
-        # Compute target Q-value using the target networks
         with torch.no_grad():
             next_action = Actor_target(next_obs)
             target_q_value = Critic_target(next_obs, next_action).squeeze(1)
             target_q_value = reward + GAMMA * target_q_value * done
         
-        # Compute current Q-value using the critic network
         current_q_value = Critic(obs, action).squeeze(1)
         critic_loss = self.loss_fn(current_q_value, target_q_value)
         
-        # Update the critic network
+        # Update critic network parameters
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
         
-        # Compute actor loss (policy gradient)
+        # Update actor network parameters
         predicted_action = Actor(obs)
         actor_loss = -Critic(obs, predicted_action).mean()
-        
-        # Update the actor network
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
     
     def soft_update(self):
-        """Perform a soft update of the target networks."""
+        # Soft update the target networks
         Actor_state_dict = Actor.state_dict()
         Critic_state_dict = Critic.state_dict()
         Actor_target_state_dict = Actor_target.state_dict()
         Critic_target_state_dict = Critic_target.state_dict()
 
-        # Update the target networks by interpolating with the main networks
         for key in Actor_state_dict:
-            Actor_target_state_dict[key] = Actor_state_dict[key]*TAU + Actor_target_state_dict[key]*(1-TAU)
+            Actor_target_state_dict[key] = Actor_state_dict[key] * TAU + Actor_target_state_dict[key] * (1 - TAU)
         Actor_target.load_state_dict(Actor_target_state_dict)
 
         for key in Critic_state_dict:
-            Critic_target_state_dict[key] = Critic_state_dict[key]*TAU + Critic_target_state_dict[key]*(1-TAU)
+            Critic_target_state_dict[key] = Critic_state_dict[key] * TAU + Critic_target_state_dict[key] * (1 - TAU)
         Critic_target.load_state_dict(Critic_target_state_dict)
 
 class Graphic:
-    """Class for handling real-time plotting of training progress."""
     def __init__(self, x: str, y: str, title: str):
-        plt.ion()  # Enable interactive mode for real-time plotting
+        plt.ion()
         
         self.x = x
         self.y = y
@@ -179,7 +171,7 @@ class Graphic:
         self.rewards = []
 
     def update(self, episode, reward):
-        """Update the plot with new episode and reward data."""
+        # Update the plot with new data
         self.episodes.append(episode)
         self.rewards.append(reward)
 
@@ -193,7 +185,7 @@ class Graphic:
         plt.title(self.title)
     
     def show(self):
-        """Display the final plot after training."""
+        # Show the final plot
         plt.ioff()
         
         plt.clf()
@@ -207,29 +199,26 @@ class Graphic:
         plt.show()
 
 def step(pbar, episode):
-    """Single step of agent training."""
     obs, info = env.reset()
 
-    DDPG.current_noise = 0.0  # Reset noise for each episode
+    DDPG.current_noise = 0.0
 
     total_reward = 0
     truncated = False
     while True:
-        # Select an action using the DDPG agent
         action = DDPG.action(tensor(obs, dtype=torch.float32, device=device))
 
         next_obs, reward, done, truncated, _ = env.step(action)
 
         pbar.set_description(f"action: {action.item(): .4f} | reward: {reward: .4f}, {truncated}")
 
-        # Store the experience in the replay buffer
         Buffer.push([obs, action, reward, next_obs, truncated])
 
         if (episode+1) % 4 == 0:
-            DDPG.education()  # Train the agent every 4 episodes
+            DDPG.education()
 
         if (episode+1) % 20 == 0:
-            DDPG.soft_update()  # Update the target networks every 20 episodes
+            DDPG.soft_update()
 
         obs = next_obs
         total_reward += reward
@@ -237,10 +226,9 @@ def step(pbar, episode):
         if truncated:
             break
     
-    # Update the training progress plot
     Graphic.update(episode, total_reward)
 
-# Initialize the replay buffer, networks, and DDPG agent
+# Initialize ReplayBuffer and networks
 Buffer = ReplayBuffer(MAXLEN)
 
 Actor = ActorNetwork()
@@ -250,13 +238,14 @@ Critic_target = CriticNetwork()
 
 DDPG = DDPG()
 
+# Initialize the plotting
 Graphic = Graphic(
     x='episode',
     y='reward',
     title='DDPG Pendulum-v1'
 )
 
-# Initialize target networks with the same weights as the main networks
+# Load the initial weights into target networks
 Actor_target.load_state_dict(Actor.state_dict())
 Critic_target.load_state_dict(Critic.state_dict())
 
@@ -264,9 +253,11 @@ Critic_target.load_state_dict(Critic.state_dict())
 for episode in (pbar := tqdm(range(EPISODES))):
     step(pbar, episode)
 
+    # Switch to rendering mode towards the end of training
     if (episode+1) == (EPISODES-10):
-        env = env_render  # Switch to render mode in the last 10 episodes
+        env = env_render
 
-# Close the environment and show the final training plot
 env.close()
+
+# Show the final plot
 Graphic.show()
