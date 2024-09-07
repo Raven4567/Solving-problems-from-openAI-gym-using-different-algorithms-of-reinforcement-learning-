@@ -7,118 +7,118 @@ from random import random, sample
 from collections import deque
 from tqdm import tqdm
 
-# Создаем окружение Gym для задачи Taxi
+# Create a Gym environment for the Taxi task
 env = gym.make('Taxi-v3')
 
-# Параметры обучения и гиперпараметры
-EPISODES = 600             # Количество эпизодов обучения
-MAX_LEN = 100000           # Максимальная длина буфера воспроизведения
-BATCH_SIZE = 128           # Размер мини-батча для обучения
-TAU = 0.0005               # Коэффициент для мягкого обновления целевой сети
-GAMMA = 0.99               # Коэффициент дисконтирования
-LR = 0.005                 # Скорость обучения
+# Training parameters and hyperparameters
+EPISODES = 600             # Number of training episodes
+MAX_LEN = 100000           # Maximum length of the replay buffer
+BATCH_SIZE = 128           # Mini-batch size for training
+TAU = 0.0005               # Coefficient for soft updating the target network
+GAMMA = 0.99               # Discount factor
+LR = 0.005                 # Learning rate
 
-# Параметры для ε-жадной политики
-EPS = 1.0                  # Начальное значение ε
-EPS_MIN = 0.005            # Минимальное значение ε
-EPS_DECAY = EPS_MIN ** (1/EPISODES)  # Коэффициент затухания ε
+# Parameters for the ε-greedy policy
+EPS = 1.0                  # Initial value of ε
+EPS_MIN = 0.005            # Minimum value of ε
+EPS_DECAY = EPS_MIN ** (1/EPISODES)  # Decay rate for ε
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # Использовать GPU если доступен
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # Use GPU if available
 
 print(device)
 
 class ReplayBuffer:
-    """Класс для буфера воспроизведения опыта."""
+    """Class for the experience replay buffer."""
     def __init__(self, maxlen: int):
         self.memory = deque([], maxlen=maxlen)
     
     def push(self, data: list):
-        """Добавить новый опыт в буфер."""
+        """Add new experience to the buffer."""
         self.memory.append(data)
     
     def sample_data(self, batch_size: int):
-        """Выбрать случайный мини-батч данных из буфера."""
+        """Randomly sample a mini-batch of data from the buffer."""
         return sample(self.memory, batch_size)
 
     def __len__(self):
         return len(self.memory)
 
 class Network(nn.Module):
-    """Нейронная сеть для обучения агента."""
+    """Neural network for training the agent."""
     def __init__(self):
         super().__init__()
 
         self.model = nn.Sequential(
-            nn.Linear(1, 128),    # Входной слой с 1 нейроном
-            nn.ReLU(),            # Функция активации ReLU
-            nn.Linear(128, 128),  # Скрытый слой с 128 нейронами
-            nn.ReLU(),            # Функция активации ReLU
-            nn.Linear(128, 6),    # Выходной слой с 6 нейронами (число действий)
+            nn.Linear(1, 128),    # Input layer with 1 neuron
+            nn.ReLU(),            # ReLU activation function
+            nn.Linear(128, 128),  # Hidden layer with 128 neurons
+            nn.ReLU(),            # ReLU activation function
+            nn.Linear(128, 6),    # Output layer with 6 neurons (number of actions)
         )
         
-        self.loss_fn = nn.SmoothL1Loss()  # Функция потерь
-        self.optimizer = optim.AdamW(self.parameters(), lr=LR, amsgrad=True)  # Оптимизатор
+        self.loss_fn = nn.SmoothL1Loss()  # Loss function
+        self.optimizer = optim.AdamW(self.parameters(), lr=LR, amsgrad=True)  # Optimizer
 
         self.to(device)
 
     def forward(self, X: tensor):
-        """Прямой проход через сеть."""
+        """Forward pass through the network."""
         pred = self.model(X)
         return pred
 
 class Agent(Network):
-    """Агент, использующий нейронную сеть для выбора действий и обучения."""
+    """Agent that uses the neural network for action selection and training."""
     def __init__(self):
         super().__init__()
 
     def Action(self, obs: tensor):
-        """Выбрать действие согласно ε-жадной стратегии."""
+        """Select an action based on the ε-greedy policy."""
         if EPS > random():
-            # Случайное действие
+            # Random action
             action = env.action_space.sample()
         else:
-            # Действие, максимизирующее Q-значение
+            # Action that maximizes Q-value
             with torch.no_grad():
                 action = self.forward(obs).argmax().item()
         return action
     
     def Education(self, Buffer, Q_target):
-        """Обучение сети на основе данных из буфера воспроизведения."""
+        """Train the network using data from the replay buffer."""
         if len(Buffer) < BATCH_SIZE:
             return 
         
-        self.train()  # Переключаемся в режим обучения
+        self.train()  # Switch to training mode
         
         batch = Buffer.sample_data(BATCH_SIZE)
 
         obs, action, reward, next_obs = zip(*batch)
 
-        # Преобразуем данные в тензоры
+        # Convert data to tensors
         obs = tensor(np.array(obs), dtype=torch.float32, device=device)
         action = tensor(np.array(action), dtype=torch.int64, device=device)
         reward = tensor(np.array(reward), device=device)
         next_obs = tensor(np.array(next_obs), dtype=torch.float32, device=device)
 
-        # Вычисляем целевые Q-значения
+        # Compute target Q-values
         with torch.no_grad():
             Q_value_of_next_states = Q_target(next_obs)
         Max_Q_values = Q_value_of_next_states.max(1)[0]
         Target_Q_value = reward + GAMMA * Max_Q_values
 
-        # Вычисляем текущее Q-значение и функцию потерь
+        # Compute current Q-value and loss function
         Q_value = self.forward(obs).gather(1, action.unsqueeze(1)).squeeze(1)
         loss = self.loss_fn(Q_value, Target_Q_value)
 
-        # Обновляем параметры сети
+        # Update network parameters
         self.optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_value_(self.parameters(), 10)  # Ограничение градиентов
+        nn.utils.clip_grad_value_(self.parameters(), 10)  # Clip gradients
         self.optimizer.step()
 
-        self.eval()  # Переключаемся в режим оценки
+        self.eval()  # Switch to evaluation mode
     
     def soft_update(self, Q_target, Q_policy):
-        """Мягкое обновление целевой сети."""
+        """Soft update of the target network."""
         policy_state_dict = Q_policy.state_dict()
         target_state_dict = Q_target.state_dict()
 
@@ -127,15 +127,15 @@ class Agent(Network):
         Q_target.load_state_dict(target_state_dict)
 
     def Reset_parameters(self):
-        """Сброс параметров сети."""
+        """Reset the network parameters."""
         for param in self.model.children():
             if hasattr(param, 'reset_parameters'):
                 param.reset_parameters()
 
 class Graphic:
-    """Класс для визуализации графиков."""
+    """Class for plotting graphs."""
     def __init__(self, x: str, y: str, title: str):
-        plt.ion()  # Включаем интерактивный режим
+        plt.ion()  # Enable interactive mode
 
         plt.figure(1)
         plt.xlabel(x)
@@ -146,23 +146,23 @@ class Graphic:
         self.list_of_accuracy = []
 
     def update(self, episode: int, accuracy: int):
-        """Обновление графика."""
+        """Update the graph."""
         self.list_of_episodes.append(episode)
         self.list_of_accuracy.append(accuracy)
-        plt.clf()  # Очистка текущего графика
+        plt.clf()  # Clear the current plot
         plt.plot(self.list_of_episodes, self.list_of_accuracy)
-        plt.pause(0.001)  # Пауза для обновления графика
+        plt.pause(0.001)  # Pause to refresh the graph
     
     def show(self, new_title: int):
-        """Отображение окончательного графика."""
-        plt.ioff()  # Отключаем интерактивный режим
+        """Show the final graph."""
+        plt.ioff()  # Disable interactive mode
         plt.title(new_title)
         plt.clf()
         plt.plot(self.list_of_episodes, self.list_of_accuracy)
         plt.show()
 
 def step(pbar):
-    """Шаг обучения агента."""
+    """Agent training step."""
     global EPS
 
     obs, info = env.reset()
@@ -175,13 +175,13 @@ def step(pbar):
 
         next_obs, reward, done, _, _ = env.step(action)
 
-        #env.render()  # Опционально: для визуализации действий агента в окружении
+        #env.render()  # Optional: for visualizing agent actions in the environment
 
         pbar.set_description(f"Obs: {obs} || Action: {action}, EPS: {EPS: .3f} || reward: {reward}, done: {done}")
 
         Buffer.push([[obs], action, reward, [next_obs]])
 
-        # Обучение и обновление сети
+        # Train and update the network
         if (steps + 1) % 5 == 0:
             Agent.Education(Buffer, Q_target)
         
@@ -196,12 +196,12 @@ def step(pbar):
         if done:
             break
 
-    # Обновление значения ε
+    # Update ε value
     EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN
 
     Graphic.update(episode, reward_per_episode)
 
-# Инициализация буфера, сети и агента
+# Initialize the buffer, network, and agent
 Buffer = ReplayBuffer(MAX_LEN)
 Q_policy = Network()
 Q_target = Network()
@@ -209,10 +209,10 @@ Q_target.load_state_dict(Q_policy.state_dict())
 Agent = Agent()
 Graphic = Graphic(x='episodes', y='accuracy', title='In progress...')
 
-# Основной цикл обучения
+# Main training loop
 for episode in (pbar := tqdm(range(EPISODES))):
     step(pbar)
 
-# Закрытие окружения и отображение графика
+# Close environment and show the graph
 env.close()
 Graphic.show(new_title='Result')
