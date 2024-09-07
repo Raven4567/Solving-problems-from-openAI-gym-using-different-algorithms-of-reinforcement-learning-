@@ -138,10 +138,10 @@ def step(episode, pbar):
         total_reward += reward
         steps += 1
 
-        if (steps+1) % 10:
+        if (steps+1) % 5:
             Agent.education()
 
-        if (steps+1) % 20:
+        if (steps+1) % 100:
             Agent.soft_update()
             
         if done or truncated:
