@@ -1,6 +1,6 @@
 '''
-Импортируем библиотеки: gym, numpy, matplotlib.pyplot, tqdm и подклассы random.
-                                                                                '''
+Importing libraries: gym, numpy, matplotlib.pyplot, tqdm, and random subclasses.
+'''
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,77 +8,77 @@ from tqdm import tqdm
 
 from random import random, randint
 
-env = gym.make('Taxi-v3') # Создаём среду
+env = gym.make('Taxi-v3') # Creating the environment
 
-plt.ion() # Включаем интерактивное окно для графиков
+plt.ion() # Enable interactive mode for plots
 
-plt.figure(1) # Создаём figure с номером 1 
+plt.figure(1) # Create a figure with number 1
 
-# Редактируем Заголовок, и определяем название осей x и y
+# Edit the title and define the names for the x and y axes
 plt.xlabel('Episodes')
 plt.ylabel('Accuracy')
 plt.title('In Progress...')
 
-action_space = env.action_space.n # Количество дискретных действий
-observation_space = env.observation_space.n # Количество дискретных состояний
+action_space = env.action_space.n # Number of discrete actions
+observation_space = env.observation_space.n # Number of discrete states
 
-# Создаём таблицу и заполняем её случайными числами от 0 до 0.4, для лучшего исследования среды
+# Create a table and fill it with random numbers between 0 and 0.4 for better environment exploration
 Q_table = np.random.uniform(low=0, high=0.4, size=(observation_space, action_space))
 
-episodes_list = [] # Список эпизодов
-accuracy_list = [] # Список общих наград за эпизоды
+episodes_list = [] # List of episodes
+accuracy_list = [] # List of total rewards per episode
 
-EPISODES = 600 # Кол-во эпизодов
+EPISODES = 600 # Number of episodes
 
-LR = 0.005 # Скорость обучения
-GAMMA = 0.99 # Дисконтный фактор
+LR = 0.005 # Learning rate
+GAMMA = 0.99 # Discount factor
 
-EPS = 1.0 # Начальный эпсилон
-EPS_MIN = 0.05 # Конечный эпсилон
-EPS_DECAY = EPS_MIN ** (1/EPISODES) # Формула экпоненциального уменьшения эпсилона
+EPS = 1.0 # Initial epsilon
+EPS_MIN = 0.05 # Minimum epsilon
+EPS_DECAY = EPS_MIN ** (1/EPISODES) # Formula for exponential epsilon decay
 
-# Создаём цикл с pbar (т. е. шкалой прогресса) 
+# Create a loop with pbar (i.e., progress bar)
 for episode in (pbar := tqdm(range(EPISODES))):
-    obs, info = env.reset() # Получаем начальное состояние среды
+    obs, info = env.reset() # Get the initial state of the environment
 
-    total_reward = 0 # Общая награда за эпизод
+    total_reward = 0 # Total reward for the episode
     while True:
-        # Действие в соответствии e-greedy политикой
+        # Action according to the e-greedy policy
         action = randint(0, action_space-1) if EPS > random() else np.argmax(Q_table[obs])
 
-        next_obs, reward, done, _, _ = env.step(action) # Делаем шаг
+        next_obs, reward, done, _, _ = env.step(action) # Take a step
 
-        # Обновляем шкалу прогресса
+        # Update the progress bar
         pbar.set_description(f"obs: {obs} || action: {action}, eps: {EPS: .4f} || reward: {reward}, done: {done}")
 
-        # Обновление Q-таблицы по формуле SARSA
+        # Q-table update using SARSA formula
         Q_table[obs, action] += LR * (reward + GAMMA * Q_table[next_obs, np.argmax(next_obs)] - Q_table[obs, action])
 
-        total_reward += reward # Прибавляем награду к общей награде 
-        obs = next_obs # обновляем состояние
+        total_reward += reward # Add the reward to the total reward
+        obs = next_obs # Update the state
 
-        if done: # Если состояние конечное
-            episodes_list.append(episode) # Добавляем текущий эпизод в список
-            accuracy_list.append(total_reward) # Добалвяем общую награду (точность) в список
+        if done: # If the state is terminal
+            episodes_list.append(episode) # Add the current episode to the list
+            accuracy_list.append(total_reward) # Add the total reward (accuracy) to the list
 
-            break # Выходим из цикла
+            break # Exit the loop
     
-    EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN # Уменьшаем эпсилон
+    EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN # Decrease epsilon
 
-    plt.clf() # Отчищаем окно графика
-    plt.plot(episodes_list, accuracy_list) # Создаём линию графика
-    plt.pause(0.001) # Задержка
+    plt.clf() # Clear the plot window
+    plt.plot(episodes_list, accuracy_list) # Create a line plot
+    plt.pause(0.001) # Pause
 
-plt.ioff() # После окончания цикла обучения, мы выключаем интерактивное окно 
+plt.ioff() # After the training loop ends, disable interactive mode
 
-plt.title('Result') # Переименовываем заголовок
+plt.title('Result') # Rename the title
 
-# Отчищаем окно и создаём новый график
+# Clear the window and create a new plot
 plt.clf()
 plt.plot(episodes_list, accuracy_list)
 
-# Отоброжаем конечный график
+# Show the final plot
 plt.show()
 
 env.close()
-# Закрываем среду
+# Close the environment
