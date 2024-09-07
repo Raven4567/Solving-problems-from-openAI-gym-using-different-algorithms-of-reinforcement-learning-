@@ -11,8 +11,10 @@ env = gym.make('CartPole-v1')
 env_render = gym.make('CartPole-v1', render_mode='human')
 
 EPISODES = 600
+
 BATCH_SIZE = 128
 TAU = 0.005
+
 EPS = 1.0
 EPS_MIN = 0.005
 EPS_DECAY = EPS_MIN ** (1/EPISODES)
@@ -21,19 +23,15 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class ReplayBuffer:
     def __init__(self, buffer_size: int):
-        # Initialize the replay buffer with a maximum size
         self.memory = deque([], maxlen=buffer_size)
     
     def push(self, data: list):
-        # Add a new data point to the buffer
         self.memory.append(data)
     
     def sample_batch(self, batch_size: int):
-        # Return a random batch of data from the buffer
         return sample(self.memory, batch_size)
     
     def __len__(self):
-        # Return the number of elements in the buffer
         return len(self.memory)
 
 class Network(nn.Module):
@@ -57,7 +55,6 @@ class Network(nn.Module):
         self.to(device)
     
     def forward(self, X: tensor):
-        # Forward pass through the network
         return self.model(X)
 
 class Agent:
@@ -71,7 +68,6 @@ class Agent:
         self.optimizer = optim.AdamW(params=self.Q_policy.parameters(), lr=0.001, amsgrad=True)
 
     def action(self, state: tensor):
-        # Select an action based on epsilon-greedy policy
         if EPS > random():
             action = env.action_space.sample()
             return action
@@ -82,7 +78,6 @@ class Agent:
             return action
     
     def education(self):
-        # Update the policy network using experience replay
         if len(Buffer) < BATCH_SIZE:
             return 
 
@@ -100,7 +95,7 @@ class Agent:
 
         Max_Q_values_next_states = Q_of_next_states.max(1)[0]
 
-        Q_value = reward + (0.99 * Max_Q_values_next_states * (1 - done))
+        Q_value = reward + (0.99 * Max_Q_values_next_states * 1 - done)
         Actions = self.Q_policy(obs).gather(1, action.unsqueeze(1))
 
         loss = self.loss_fn(Actions, Q_value.unsqueeze(1))
@@ -112,12 +107,11 @@ class Agent:
         self.Q_policy.eval()
     
     def soft_update(self):
-        # Update the target network with a soft update
         target_net_state_dict = self.Q_target.state_dict()
         policy_net_state_dict = self.Q_policy.state_dict()
 
         for key in policy_net_state_dict:
-            target_net_state_dict[key] = policy_net_state_dict[key] * TAU + target_net_state_dict[key] * (1 - TAU)
+            target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
         self.Q_target.load_state_dict(target_net_state_dict)
 
 def step(episode, pbar):
@@ -126,6 +120,7 @@ def step(episode, pbar):
     obs, info = env.reset()
 
     total_reward = 0
+    steps = 0
 
     done = False
     while not done:
@@ -141,11 +136,12 @@ def step(episode, pbar):
         obs = next_obs
 
         total_reward += reward
+        steps += 1
 
-        if (episode+1) % 10 == 0:
+        if (steps+1) % 10:
             Agent.education()
 
-        if (episode+1) % 20 == 0:
+        if (steps+1) % 20:
             Agent.soft_update()
             
         if done or truncated:
@@ -167,7 +163,6 @@ class Graphic:
         self.episodes_list = []
 
     def add(self, x, y):
-        # Update the plot with the latest data
         self.accuracy_list.append(y)
         self.episodes_list.append(x)
 
@@ -176,7 +171,6 @@ class Graphic:
         plt.pause(0.005)
     
     def show(self, new_title=str):
-        # Show the final plot
         plt.ioff()
 
         plt.title(new_title)
@@ -193,6 +187,7 @@ Buffer = ReplayBuffer(buffer_size=100000)
 Agent = Agent()
 
 for episode in (pbar := tqdm(range(EPISODES))):
+
     step(episode+1, pbar)
 
     if (episode+1) % (EPISODES-10) == 0:
