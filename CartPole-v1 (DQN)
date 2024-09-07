@@ -1,277 +1,200 @@
-# Импорт
 import torch
 from torch import nn, optim, tensor
-
-import numpy as np
 import gym
-
+import numpy as np
 import matplotlib.pyplot as plt
-from random import sample, random, randint
+from random import random, sample
 from collections import deque
-
 from tqdm import tqdm
 
-# Создание среды
-env = gym.make('CartPole-v1', render_mode='human')
+# Create the environment for training
+env = gym.make('CliffWalking-v0')
 
-# Сбрасывать ли параметры перед запуском
-RESET_PARAMETERS = True
-
-# Количество эпизодов (шагов) за выполнение кода
+# Training parameters and hyperparameters
 EPISODES = 600
-
-# Размер пакета и параметра TAU
+MAX_LEN = 100000
 BATCH_SIZE = 128
 TAU = 0.005
-
-# Начальный и конечный эпсилон
+GAMMA = 0.99
+LR = 0.1
 EPS = 1.0
 EPS_MIN = 0.0005
-
-# Формула для экспоненциального уменьшения эпсилона
 EPS_DECAY = EPS_MIN ** (1/EPISODES)
 
-CURRENT_EPS = EPS # Инициализация текущего эпсилона
+# Select the device for computation (GPU or CPU)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
 
-#Создание буфера
 class ReplayBuffer:
-    def __init__(self, buffer_size):
-        '''Инициализация буфера'''
-        
-        self.memory = deque([], maxlen=buffer_size)
+    def __init__(self, maxlen: int):
+        self.memory = deque([], maxlen=maxlen)
     
-    def push(self, data):
-        '''Добавление данных в буффер'''
-        
+    def push(self, data: list):
         self.memory.append(data)
     
-    def sample_batch(self, batch_size):
-        '''Возвращает пакет данных в соответствии с параметром batch_size'''
-        
+    def sample_data(self, batch_size: int):
         return sample(self.memory, batch_size)
-    
+
     def __len__(self):
-        '''Возвращает кол-во пакетов в буфере'''
-        
         return len(self.memory)
 
-# Инициализация Policy // Target - сети
 class Network(nn.Module):
     def __init__(self):
-        '''Инициализация Модели, функции потерь и оптимизатора. (И переменной с весами для отладки)'''
-        
         super().__init__()
 
+        # Define the neural network model
         self.model = nn.Sequential(
-            nn.Linear(env.observation_space.shape[0], 128),
+            nn.Linear(1, 128),
             nn.ReLU(),
             nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(128, env.action_space.n)
+            nn.Linear(128, 4),
         )
-
-        self.loss_fn = nn.SmoothL1Loss() # Функция ошибки
-        self.optimizer = optim.AdamW(params=self.parameters(), lr=0.001, amsgrad=True) # Оптимизатор
-    
-    def forward(self, X=tensor):
-        '''Возвращает предсказание (pred) для выбора действия'''
         
-        return self.model(X)
+        # Loss function and optimizer
+        self.loss_fn = nn.SmoothL1Loss()
+        self.optimizer = optim.AdamW(self.parameters(), lr=LR, amsgrad=True)
 
-# Инициализация Агента
+        self.to(device)
+
+    def forward(self, X: tensor):
+        return self.model(X)
+    
 class Agent(Network):
     def __init__(self):
-        '''
-            Инициализирует текущий эпсилон для последующего уменьшения, и 
-            вызывает родительский конструктор для использвания модели    
-                                                                            '''
         super().__init__()
 
-        self.eps = EPS
-
-    def Action(self, state):
-        '''Принимает действие в соответствии с e-greedy (эпсилон_жадной) стратегией/политикой'''
-     
-        if CURRENT_EPS > random():
-            pred = tensor(randint(0, env.action_space.n-1))
-            return pred
-        
+    def Action(self, obs: tensor):
+        # Epsilon-greedy method for action selection
+        if EPS > random():
+            action = env.action_space.sample()
         else:
             with torch.no_grad():
-                pred = self.forward(state).argmax()
-            return pred
+                action = self.forward(obs).argmax().item()
+        return action
     
     def Education(self, Buffer, Q_target):
-        '''Функция обучения для обновления весов policy-сети.
-           Запрашивает ваш буффер и target-сеть.             '''
-        
-        # Проверка достаточно ли пакетов данных для обучения
+        # Training the network
         if len(Buffer) < BATCH_SIZE:
             return 
         
-        self.model.train() # Перевод модели в режим обучения
+        self.train()
+        
+        # Sample a random batch of data
+        batch = Buffer.sample_data(BATCH_SIZE)
+        obs, action, reward, next_obs = zip(*batch)
 
-        batch = Buffer.sample_batch(BATCH_SIZE) # Получение пакета данных
+        # Convert data to tensors
+        obs, action, reward, next_obs = np.array(obs), np.array(action), np.array(reward), np.array(next_obs)
+        obs, action, reward, next_obs = tensor(obs, dtype=torch.float32, device=device), tensor(action, dtype=torch.int64, device=device), tensor(reward, device=device), tensor(next_obs, dtype=torch.float32, device=device)
 
-        obs, action, reward, next_obs, done = zip(*batch) # Распаковка
-
-        # Преобразование в массивы NumPy и тензоры PyTorch
-        obs, action, reward, next_obs, done = np.array(obs), np.array(action), np.array(reward), np.array(next_obs), np.array(done)
-        obs, action, reward, next_obs, done = tensor(obs), tensor(action), tensor(reward), tensor(next_obs), tensor(done)
-
-        # Преобразование False и True, в 0 и 1 соответсвенно
-        done = tensor([i for i in map(lambda x: 1-int(x), done)])
-
+        # Compute target Q-values
         with torch.no_grad():
-            Q_of_next_states = Q_target(next_obs) # Вычисление Q-значений для следующих состояний
+            Q_value_of_next_states = Q_target(next_obs)
+        Max_Q_values = Q_value_of_next_states.max(1)[0]
+        Target_Q_value = reward + GAMMA * Max_Q_values
 
-        Max_Q_values_next_states = Q_of_next_states.max(1)[0] # Выбор максимальных Q-значений следующиъ состояний
+        # Compute loss
+        Q_value = self.forward(obs).gather(1, action.unsqueeze(1)).squeeze(1)
+        loss = self.loss_fn(Q_value, Target_Q_value)
 
-        Q_value = reward + (0.99 * Max_Q_values_next_states * done) # Уравнение (Р.) Беллмана
-
-        Actions = self.forward(obs).gather(1, action.unsqueeze(1)) # Выбор Q-значений для текущих состояний(obs) в соответствии с действиями(action)
-
-        loss = self.loss_fn(Actions, Q_value.unsqueeze(1)) # Вычисление ошибки с помощью функции ошибки
-
-        self.optimizer.zero_grad() # Сброс градиентов оптимизатора
-
-        loss.backward() # Обратное Распространение ошибки
-
-        self.optimizer.step() # Смещение весов
-        
-        self.model.eval() # Перевод модели обратно в режим оценки
+        # Update network parameters
+        self.optimizer.zero_grad()
+        loss.backward()
+        nn.utils.clip_grad_norm_(self.parameters(), 10)  # Gradient clipping
+        self.optimizer.step()
+        self.eval()
     
-    def Reset_parameters(self):
-        '''Просто функция для сброса параметров. (Выполняется если RESET_PARAMETERS = True'''
-        for layer in self.model.children():
-            if hasattr(layer, 'reset_parameters'):
-                layer.reset_parameters()
-        
-        '''
-            Я Хз как это работает
-                                    '''
+    def soft_update(self, Q_target, Q_policy):
+        # Update the target network using soft updates
+        policy_state_dict = Q_policy.state_dict()
+        target_state_dict = Q_target.state_dict()
 
-# Инициализация среды
-class Environment:
-    def __init__(self, Buffer, Q_target, Agent, Graphic):
-        '''Инициализирует переданные атрибуты, текущее состояние и переменную для отображения точности сети.'''
+        for key in policy_state_dict:
+            target_state_dict[key] = policy_state_dict[key] * TAU + target_state_dict[key] * (1 - TAU)
+        Q_target.load_state_dict(target_state_dict)
 
-        self.Buffer = Buffer
-        self.Q_target = Q_target
-        self.Agent = Agent
-        self.Graphic = Graphic
-
-        self.current_accuracy = 0
-    
-    def step(self, episode, pbar):
-        '''Просто выполняет один эпизод'''
-        
-        obs, info = env.reset()
-
-        while 600:
-            action = self.Agent.Action(tensor(obs)) # Передаёт состояние конвертированное в тензор в Action для совершения действия в соответствии с E-greedy стратегий/политикой
-
-            next_obs, reward, done, _, _ = env.step(action.item()) # Выполняем шаг
-
-            env.render() # Рендер
-
-            # Отображаем: состояние, действие, награду (всегда 1), и ' True' (с пробелом) если done это True, и 'False' без пробела в ином случае, для того чтобы линия прогресса не "дёргалась"
-            pbar.set_description(f"|| [{obs[0]: .6f}, {obs[1]: .6f}, {obs[2]: .6f}, {obs[3]: .6f}] || {action}, {CURRENT_EPS: .5f} || {reward} || {' True' if done else 'False'} ||")
-
-            self.Buffer.push([obs, action, reward, next_obs, done]) # Передаём (другой) пакет в буффер для последующего обучения сети
-
-            obs = next_obs # обновляем текущее состояние
-
-            self.current_accuracy += 1 # Добавляем +1 в переменную для отображения того сколько агент продержался не уронив шест
-
-            if (episode+1) % 10: # Каждый 10-ый эпизод
-                self.Agent.Education(self.Buffer, self.Q_target)
-
-                ''' Происходит "обновление основной (policy) сети" '''
-
-            if (episode+1) % 20: # Каждый 20-ый эпизод
-                target_net_state_dict = self.Q_target.state_dict()
-                policy_net_state_dict = self.Agent.state_dict()
-
-                for key in policy_net_state_dict:
-                    target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
-                    self.Q_target.load_state_dict(target_net_state_dict)
-
-                ''' Происходит "Мягкое обновление целевой (target) сети" '''
-            
-            if done: # Если агент проиграл
-                break # Выход из цикла эпизода
-        
-        self.Graphic.add(episode+1, self.current_accuracy) # Обновление графика
-        self.current_accuracy = 0 # Обнуление перменной точности
-
-# Инициализиация класса для отображения результата
 class Graphic:
-    def __init__(self, x=str, y=str, title=str):
-        '''Создает интерактивное окно для графика'''
-        plt.ion() # InteractiveON (Интерактив Включён)
+    def __init__(self, x: str, y: str, title: str):
+        plt.ion()
 
-        plt.xlabel(x) # x-шкала
-        plt.ylabel(y) # y-шкала
-        plt.title(title) # title-заголовок
+        plt.figure(1)
 
-        self.accuracy_list = [] # Список для точности на графике
-        self.episodes_list = [] # Список для эпизодов на графике
+        plt.xlabel(x)
+        plt.ylabel(y)
+        plt.title(title)
 
-    def add(self, x, y):
-        '''Обновляет ваш график'''
-        self.accuracy_list.append(y) # Добавляет переданную текущую переменную точности
-        self.episodes_list.append(x) # Добавляет переданную текущую переменную т. эпизода
+        self.list_of_episodes = []
+        self.list_of_accuracy = []
 
-        plt.clf() # Отчищает график
-        plt.plot(self.episodes_list, self.accuracy_list) # Создаёт линию графика
-        plt.pause(0.005) # Задержка для отображения
+    def update(self, episode: int, accuracy: int):
+        # Update the plot
+        self.list_of_episodes.append(episode)
+        self.list_of_accuracy.append(accuracy)
+
+        plt.clf()
+        plt.plot(self.list_of_episodes, self.list_of_accuracy)
+        plt.pause(0.001)
     
-    def show(self, new_title=str):
-        '''Отображает ваш график по завершению программы'''
+    def show(self, new_title: int):
+        # Display the final plot
+        plt.ioff()
 
-        plt.ioff() # InteractiveOFF (Интерактив Выключен)
+        plt.title(new_title)
+        plt.clf()
+        plt.plot(self.list_of_episodes, self.list_of_accuracy)
+        plt.show()
 
-        plt.title(new_title) # Обновлённый заголовок
+def step(pbar):
+    global EPS
 
-        plt.clf() # Отчищает график
-        plt.plot(self.episodes_list, self.accuracy_list) # Создаёт единную линию на графике
+    obs, info = env.reset()
 
-        plt.show() # Отображает конечный результат
+    reward_per_episode = 0
 
-# Инициализация: Графика, буфера, Policy и Target сетей, копирует веса основной сети в целевую, инициализиурет Агента и среду 
-Graphic = Graphic(x='Episodes',
-                  y='Accuracy',
-                  title='Graphic of Accuracy on episode')
+    steps = 0
+    while steps != 200:
+        action = Agent.Action(tensor([obs], dtype=torch.float32, device=device))
 
-Buffer = ReplayBuffer(buffer_size=2500)
+        next_obs, reward, done, _, _ = env.step(action)
 
+        #env.render()
+
+        pbar.set_description(f"Obs: {obs} || Action: {action}, EPS: {EPS: .4f} || reward: {reward}, done: {done}")
+
+        Buffer.push([[obs], action, reward, [next_obs]])
+
+        if (steps + 1) % 5 == 0:
+            Agent.Education(Buffer, Q_target)
+        
+        if (steps + 1) % 100 == 0:
+            Agent.soft_update(Q_target, Q_policy)
+
+        obs = next_obs
+
+        reward_per_episode += reward
+        steps += 1
+
+        if done:
+            break
+
+    # Decrease epsilon value (for greedy action selection)
+    EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN
+
+    Graphic.update(episode, reward_per_episode)
+
+# Initialize ReplayBuffer and neural networks
+Buffer = ReplayBuffer(MAX_LEN)
 Q_policy = Network()
 Q_target = Network()
-
 Q_target.load_state_dict(Q_policy.state_dict())
-
 Agent = Agent()
+Graphic = Graphic(x='episodes', y='accuracy', title='In progress...')
 
-Environment = Environment(Buffer=Buffer, 
-                          Q_target=Q_target, 
-                          Agent=Agent, 
-                          Graphic=Graphic
-)
-
-# Если мы сбрасываем параметры при запуске программы
-if RESET_PARAMETERS:
-
-    Agent.Reset_parameters() # Вызываем функцию для сброса параметров
-    Q_target.load_state_dict(Q_policy.state_dict()) # Копируем новые параметры после сброса
-
-# Создаём pbar 
+# Main training loop
 for episode in (pbar := tqdm(range(EPISODES))):
+    step(pbar)
 
-    Environment.step(episode, pbar) # Выполняем 1 эпизод
-
-    CURRENT_EPS = CURRENT_EPS * EPS_DECAY if CURRENT_EPS > EPS_MIN else EPS_MIN # Уменьшение эпсилона если он больше минимального
-
-env.close() # Закрываем среду после завершения цикла
-
-Graphic.show(new_title='Result') # Отображаем конечный график и передаём новый заголовок
+# Close the environment and display the plot
+env.close()
+Graphic.show(new_title='Result')
