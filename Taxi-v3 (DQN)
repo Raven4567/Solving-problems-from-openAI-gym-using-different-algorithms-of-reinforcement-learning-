@@ -1,218 +1,228 @@
 import torch
 from torch import nn, optim, tensor
+
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
+
 from random import random, sample
 from collections import deque
 from tqdm import tqdm
 
-# Create a Gym environment for the Taxi task
 env = gym.make('Taxi-v3')
 
-# Training parameters and hyperparameters
-EPISODES = 600             # Number of training episodes
-MAX_LEN = 100000           # Maximum length of the replay buffer
-BATCH_SIZE = 128           # Mini-batch size for training
-TAU = 0.0005               # Coefficient for soft updating the target network
-GAMMA = 0.99               # Discount factor
-LR = 0.005                 # Learning rate
+EPISODES = 600  # Number of training episodes
+MAX_LEN = 100000  # Maximum size of the replay buffer
+BATCH_SIZE = 128  # Batch size for training
+TAU = 0.0005  # Soft update coefficient
+GAMMA = 0.99  # Discount factor
+LR = 0.005  # Learning rate
 
-# Parameters for the ε-greedy policy
-EPS = 1.0                  # Initial value of ε
-EPS_MIN = 0.005            # Minimum value of ε
-EPS_DECAY = EPS_MIN ** (1/EPISODES)  # Decay rate for ε
+EPS = 1.0  # Initial exploration rate (epsilon)
+EPS_MIN = 0.005  # Minimum exploration rate
+EPS_DECAY = EPS_MIN ** (1/EPISODES)  # Epsilon decay rate
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  # Use GPU if available
+# Select device: GPU (CUDA) if available, else CPU
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 print(device)
 
+# Replay buffer to store experiences
 class ReplayBuffer:
-    """Class for the experience replay buffer."""
     def __init__(self, maxlen: int):
-        self.memory = deque([], maxlen=maxlen)
+        self.memory = deque([], maxlen=maxlen)  # Use deque to store experiences
     
+    # Add a new experience to the buffer
     def push(self, data: list):
-        """Add new experience to the buffer."""
         self.memory.append(data)
     
+    # Sample a batch of experiences from the buffer
     def sample_data(self, batch_size: int):
-        """Randomly sample a mini-batch of data from the buffer."""
         return sample(self.memory, batch_size)
 
     def __len__(self):
         return len(self.memory)
 
+# Neural network for Q-learning
 class Network(nn.Module):
-    """Neural network for training the agent."""
     def __init__(self):
         super().__init__()
 
+        # Define the network architecture
         self.model = nn.Sequential(
-            nn.Linear(1, 128),    # Input layer with 1 neuron
-            nn.ReLU(),            # ReLU activation function
-            nn.Linear(128, 128),  # Hidden layer with 128 neurons
-            nn.ReLU(),            # ReLU activation function
-            nn.Linear(128, 6),    # Output layer with 6 neurons (number of actions)
+            nn.Linear(1, 128),  # Input layer
+            nn.ReLU(),  # Activation function
+            nn.Linear(128, 128),  # Hidden layer
+            nn.ReLU(),  # Activation function
+            nn.Linear(128, 6),  # Output layer (6 actions for Taxi-v3)
         )
         
-        self.loss_fn = nn.SmoothL1Loss()  # Loss function
-        self.optimizer = optim.AdamW(self.parameters(), lr=LR, amsgrad=True)  # Optimizer
+        # Initialize network weights
+        for layer in self.model:
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)  # Xavier initialization
+                if layer.bias is not None:
+                    nn.init.constant_(layer.bias, 0)  # Bias initialized to 0
 
-        self.to(device)
+        self.to(device)  # Move model to selected device
 
     def forward(self, X: tensor):
-        """Forward pass through the network."""
-        pred = self.model(X)
+        pred = self.model(X)  # Forward pass through the network
         return pred
 
-class Agent(Network):
-    """Agent that uses the neural network for action selection and training."""
+# Agent class for interacting with the environment
+class Agent:
     def __init__(self):
-        super().__init__()
+        self.Q_policy = Network()  # Policy network
+        self.Q_target = Network()  # Target network
 
+        self.Q_target.load_state_dict(self.Q_policy.state_dict())  # Copy weights
+
+        # Define loss function and optimizer
+        self.loss_fn = nn.SmoothL1Loss()
+        self.optimizer = optim.AdamW(self.Q_policy.parameters(), lr=LR, amsgrad=True)
+
+    # Select an action using epsilon-greedy policy
     def Action(self, obs: tensor):
-        """Select an action based on the ε-greedy policy."""
-        if EPS > random():
-            # Random action
-            action = env.action_space.sample()
-        else:
-            # Action that maximizes Q-value
+        if EPS > random():  # Exploration
+            action = env.action_space.sample()  # Random action
+            return action
+        else:  # Exploitation
             with torch.no_grad():
-                action = self.forward(obs).argmax().item()
-        return action
+                action = self.Q_policy(obs).argmax().item()  # Select action with highest Q-value
+            return action
     
-    def Education(self, Buffer, Q_target):
-        """Train the network using data from the replay buffer."""
+    # Train the Q-network
+    def Education(self):
         if len(Buffer) < BATCH_SIZE:
-            return 
+            return  # Skip if buffer is not filled enough
+
+        self.Q_policy.train()  # Set policy network to training mode
         
-        self.train()  # Switch to training mode
-        
-        batch = Buffer.sample_data(BATCH_SIZE)
+        batch = Buffer.sample_data(BATCH_SIZE)  # Sample batch from replay buffer
 
-        obs, action, reward, next_obs = zip(*batch)
+        # Convert batch to tensors and move to device
+        obs, action, reward, next_obs, done = zip(*batch)
+        obs, action, reward, next_obs, done = np.array(obs), np.array(action), np.array(reward), np.array(next_obs), np.array(done)
+        obs, action, reward, next_obs, done = tensor(obs, dtype=torch.float32, device=device), tensor(action, dtype=torch.int64, device=device), tensor(reward, device=device), tensor(next_obs, dtype=torch.float32, device=device), tensor(done, dtype=torch.int64, device=device)
 
-        # Convert data to tensors
-        obs = tensor(np.array(obs), dtype=torch.float32, device=device)
-        action = tensor(np.array(action), dtype=torch.int64, device=device)
-        reward = tensor(np.array(reward), device=device)
-        next_obs = tensor(np.array(next_obs), dtype=torch.float32, device=device)
-
-        # Compute target Q-values
         with torch.no_grad():
-            Q_value_of_next_states = Q_target(next_obs)
-        Max_Q_values = Q_value_of_next_states.max(1)[0]
-        Target_Q_value = reward + GAMMA * Max_Q_values
+            Q_value_of_next_states = self.Q_target(next_obs)  # Compute Q-values for next states
+        Max_Q_values = Q_value_of_next_states.max(1)[0]  # Take max Q-value for each next state
+        
+        # Compute the target Q-value
+        Target_Q_value = reward + GAMMA * Max_Q_values * (1 - done)
+        Q_value = self.Q_policy(obs).gather(1, action.unsqueeze(1)).squeeze(1)  # Get Q-value for current state-action pairs
 
-        # Compute current Q-value and loss function
-        Q_value = self.forward(obs).gather(1, action.unsqueeze(1)).squeeze(1)
-        loss = self.loss_fn(Q_value, Target_Q_value)
+        loss = self.loss_fn(Q_value, Target_Q_value)  # Compute loss
 
-        # Update network parameters
         self.optimizer.zero_grad()
-        loss.backward()
-        nn.utils.clip_grad_value_(self.parameters(), 10)  # Clip gradients
-        self.optimizer.step()
+        loss.backward()  # Backpropagate loss
+        nn.utils.clip_grad_value_(self.Q_policy.parameters(), 10)  # Gradient clipping
+        self.optimizer.step()  # Update weights
 
-        self.eval()  # Switch to evaluation mode
+        self.Q_policy.eval()  # Set policy network to evaluation mode
     
-    def soft_update(self, Q_target, Q_policy):
-        """Soft update of the target network."""
-        policy_state_dict = Q_policy.state_dict()
-        target_state_dict = Q_target.state_dict()
+    # Perform soft update of the target network
+    def soft_update(self):
+        policy_state_dict = self.Q_policy.state_dict()
+        target_state_dict = self.Q_target.state_dict()
 
+        # Update target network parameters
         for key in policy_state_dict:
             target_state_dict[key] = policy_state_dict[key] * TAU + target_state_dict[key] * (1 - TAU)
-        Q_target.load_state_dict(target_state_dict)
+        self.Q_target.load_state_dict(target_state_dict)
 
-    def Reset_parameters(self):
-        """Reset the network parameters."""
-        for param in self.model.children():
-            if hasattr(param, 'reset_parameters'):
-                param.reset_parameters()
-
+# Class for plotting progress during training
 class Graphic:
-    """Class for plotting graphs."""
     def __init__(self, x: str, y: str, title: str):
-        plt.ion()  # Enable interactive mode
+        plt.ion()  # Interactive mode for live updates
 
         plt.figure(1)
         plt.xlabel(x)
         plt.ylabel(y)
         plt.title(title)
 
-        self.list_of_episodes = []
-        self.list_of_accuracy = []
+        self.list_of_episodes = []  # Store episodes
+        self.list_of_accuracy = []  # Store accuracy (rewards)
 
+    # Update plot with new data
     def update(self, episode: int, accuracy: int):
-        """Update the graph."""
         self.list_of_episodes.append(episode)
         self.list_of_accuracy.append(accuracy)
-        plt.clf()  # Clear the current plot
-        plt.plot(self.list_of_episodes, self.list_of_accuracy)
-        plt.pause(0.001)  # Pause to refresh the graph
-    
-    def show(self, new_title: int):
-        """Show the final graph."""
-        plt.ioff()  # Disable interactive mode
-        plt.title(new_title)
+
         plt.clf()
         plt.plot(self.list_of_episodes, self.list_of_accuracy)
+        plt.draw()
+        plt.pause(0.001)  # Pause for live update
+    
+    # Display final plot
+    def show(self, new_title: int):
+        plt.ioff()  # Turn off interactive mode
+
+        plt.title(new_title)
+
+        plt.clf()
+        plt.plot(self.list_of_episodes, self.list_of_accuracy)
+
         plt.show()
 
+# Function for performing a single episode step
 def step(pbar):
-    """Agent training step."""
     global EPS
 
-    obs, info = env.reset()
+    obs, info = env.reset()  # Reset the environment and get initial state
 
-    reward_per_episode = 0
-
+    reward_per_episode = 0  # Total reward for the episode
     steps = 0
-    while steps != 200:
-        action = Agent.Action(tensor([obs], dtype=torch.float32, device=device))
 
-        next_obs, reward, done, _, _ = env.step(action)
+    while True:
+        action = Agent.Action(tensor([obs], dtype=torch.float32, device=device))  # Select an action
 
-        #env.render()  # Optional: for visualizing agent actions in the environment
+        # Perform the action and observe the next state and reward
+        next_obs, reward, done, truncated, _ = env.step(action)
 
         pbar.set_description(f"Obs: {obs} || Action: {action}, EPS: {EPS: .3f} || reward: {reward}, done: {done}")
 
-        Buffer.push([[obs], action, reward, [next_obs]])
+        # Store the experience in the replay buffer
+        Buffer.push([[obs], action, reward, [next_obs], done])
 
-        # Train and update the network
         if (steps + 1) % 5 == 0:
-            Agent.Education(Buffer, Q_target)
-        
-        if (steps + 1) % 100 == 0:
-            Agent.soft_update(Q_target, Q_policy)
+            Agent.Education()  # Train the network every 5 steps
 
-        obs = next_obs
+        if (steps + 1) % 200 == 0:
+            Agent.soft_update()  # Update target network every 200 steps
+
+        obs = next_obs  # Move to the next state
 
         reward_per_episode += reward
         steps += 1
 
-        if done:
+        if done or truncated:  # End the episode if done
             break
 
-    # Update ε value
-    EPS = EPS * EPS_DECAY if EPS > EPS_MIN else EPS_MIN
+    EPS = max(EPS_MIN, EPS * EPS_DECAY)  # Decay epsilon
 
-    Graphic.update(episode, reward_per_episode)
+    Graphic.update(episode, reward_per_episode)  # Update plot with episode reward
 
-# Initialize the buffer, network, and agent
+# Initialize replay buffer
 Buffer = ReplayBuffer(MAX_LEN)
-Q_policy = Network()
-Q_target = Network()
-Q_target.load_state_dict(Q_policy.state_dict())
+
+# Initialize agent
 Agent = Agent()
-Graphic = Graphic(x='episodes', y='accuracy', title='In progress...')
+
+# Initialize plot for training progress
+Graphic = Graphic(
+    x='episodes',
+    y='accuracy',
+    title='In progress...'
+)
 
 # Main training loop
 for episode in (pbar := tqdm(range(EPISODES))):
     step(pbar)
 
-# Close environment and show the graph
 env.close()
+
+# Show final plot
 Graphic.show(new_title='Result')
