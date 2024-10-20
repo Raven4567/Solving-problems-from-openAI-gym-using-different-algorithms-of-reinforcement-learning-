@@ -1,7 +1,7 @@
 import torch
 from torch import nn, optim, tensor
 import numpy as np
-import gym
+import gymnasium as gym
 import matplotlib.pyplot as plt
 from random import sample, random
 from collections import deque
