@@ -15,7 +15,7 @@ import numpy as np
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 
-import gym
+import gymnasium as gym
 
 # Initializing environments
 env = gym.make('CartPole-v1')                              # Create an instance of the CartPole environment
