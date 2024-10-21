@@ -176,19 +176,19 @@ class PPO:
 
     def compute_discounted_reward(self, rewards: list, dones: list):
         total_reward = 0  # Initialize total reward
-        rewards = []  # List to hold rewards
+        discounted_rewards = []  # List to hold rewards
         for reward, done in zip(reversed(rewards), reversed(dones)):  # Iterate backwards through rewards and dones
             if done:
                 total_reward = 0  # Reset total reward if episode is done
 
             total_reward = reward + (GAMMA * total_reward)  # Update total reward
 
-            rewards.insert(0, total_reward)  # Store reward
+            discounted_rewards.insert(0, total_reward)  # Store reward
         
-        rewards = tensor(rewards, dtype=torch.float32, device=device)  # Convert rewards to tensor
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)  # Normalize rewards
+        discounted_rewards = tensor(discounted_rewards, dtype=torch.float32, device=device)  # Convert rewards to tensor
+        discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (discounted_rewards.std() + 1e-7)  # Normalize rewards
 
-        return rewards  # Return normalized rewards
+        return discounted_rewards  # Return normalized rewards
 
     def education(self):
         # Convert memory data to tensors
