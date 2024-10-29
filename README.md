@@ -224,25 +224,26 @@ Graphic.show()
 ```
 
 # Results of various algorithms across different environments:
-|        Environment        | Q-leanring | SARSA  | DQN | DDPG | PPO |
+|        Environment        | Q-learning | SARSA  | DQN | DDPG | PPO |
 |---------------------------|------------|--------|-----|------|-----|
-| Cartpole-v1               |||![DQN - CartPole-v1](Results\DQN_CartPole-v1.png)||![PPO - CartPole-v1](Results\PPO_CartPole-v1.png)|
-| Acrobot-v1                |||![DQN - Acrobot-v1](Results\DQN_Acrobot-v1.png)||![PPO - Acrobot-v1](Results\PPO_Acrobot-v1.png)|
-| Pendulum-v1               ||||![DDPG - Pendulum-v1](Results\DDPG_Pendulum-v1.png)|![PPO - Pendulum-v1](Results\PPO_Pendulum-v1.png)|
-| Blackjack-v1              |||![DQN - Blackjack-v1](Results\DQN_Blackjack.png)||![PPO - Blackjack-v1](Results\DQN_Blackjack-v1.png)|
-| Taxi-v3                   |![Q-learning - Taxi-v3](Results\Q-learning_Taxi-v3.png)|![SARSA - Taxi-v3](Results\SARSA_Taxi-v3.png)|![DQN - Taxi-v3](Results\DQN-Taxi-v3.png)||![PPO - Taxi-v3](Results\PPO_Taxi-v3.png)|
-| Cliffwalking-v0           |![Q-learning - CliffWalking-v0](Results\Q-learning_Cliffwalking-v0.png)|![SARSA - CliffWalking-v0](Results\SARSA_CliffWalking-v0.png)|![DQN - CliffWalking-v0](Results\DQN_CliffWalking-v0.png)||![PPO - CliffWalking-v5](Results\PPO_CliffWalking-v0.png)|
-| FrozenLake-v1             |![Q-learning - Taxi-v3](Results\Q-learning_FrozenLake-v1.png)|![SARSA - FrozenLake-v1](Results\SARSA_FrozenLake-v1.png)|![DQN - FrozenLake-v1](Results\DQN_FrozenLake-v1.png)||![PPO - FrozenLake-v1](Results\PPO_FrozenLake-v1.png)|
-| InvertedDoublePendulum-v5 ||||![DDPG - InvertedDoublePendulum-v5](Results\DDPG_InvertedDoublePendulum-v5.png)|![PPO - InvertedDoublePendulum-v5](Results\PPO_InvertedDoublePendulum-v5.png)|
-| InvertedPendulum-v5       ||||![DDPG - InvertedPendulum-v5](Results\DDPG_InvertedPendulum-v5.png)|![PPO - InvertedDoublePendulum-v5](Results\PPO_InvertedDoublePendulum-v5.png)|
-| Ant-v5                    ||||![DDPG - Ant-v5](Results\DDPG_Ant-v5.png)|![PPO - Ant-v5](Results\PPO_Ant-v5.png)|
-| Hopper-v5                 ||||![DDPG - Hopper-v5](Results\DDPG_Hopper-v5.png)|![PPO - Hopper-v5](Results\PPO_Hopper-v5.png)|
-| Humanoid-v5               ||||![DDPG - Humanoid-v5](Results\DDPG_Humanoid-v5.png)|![PPO - Humanoid-v5](Results\PPO_Humanoid-v5.png)|
-| HumanoidStandup-v5        ||||![DDPG - HumanoidStandup-v5](Results\DDPG_HumanoidStandup-v5.png)|![PPO - HumanoidStandup-v5](Results\PPO_HumanoidStandup-v5.png)|
-| Pusher-v5                 ||||![DDPG - Pusher-v5](Results\DDPG_Pusher-v5.png)|![PPO - Pusher-v5](Results\PPO_Pusher-v5.png)|
-| Reacher-v5                ||||![DDPG - Reacher-v5](Results\DDPG_Reacher-v5.png)|![PPO - Reacher-v5](Results\PPO_Reacher-v5.png)|
-| Swimmer-v5                ||||![DDPG - Swimmer-v5](Results\DDPG_Swimmer-v5.png)|![PPO - Swimmer-v5](Results\PPO_Swimmer-v5.png)|
-| Walker2d-v5               ||||![DDPG - Walker2d-v5](Results\DDPG_Walker2d-v5.png)|![PPO - Walker2d-v5](Results\PPO_Walker2d-v5.png)|
+| Cartpole-v1               |||![DQN - CartPole-v1](Results/DQN_CartPole-v1.png)||![PPO - CartPole-v1](Results/PPO_CartPole-v1.png)|
+| Acrobot-v1                |||![DQN - Acrobot-v1](Results/DQN_Acrobot-v1.png)||![PPO - Acrobot-v1](Results/PPO_Acrobot-v1.png)|
+| Pendulum-v1               ||||![DDPG - Pendulum-v1](Results/DDPG_Pendulum-v1.png)|![PPO - Pendulum-v1](Results/PPO_Pendulum-v1.png)|
+| Blackjack-v1              |||![DQN - Blackjack-v1](Results/DQN_Blackjack.png)||![PPO - Blackjack-v1](Results/PPO_Blackjack-v1.png)|
+| Taxi-v3                   |![Q-learning - Taxi-v3](Results/Q-learning_Taxi-v3.png)|![SARSA - Taxi-v3](Results/SARSA_Taxi-v3.png)|![DQN - Taxi-v3](Results/DQN_Taxi-v3.png)||![PPO - Taxi-v3](Results/PPO_Taxi-v3.png)|
+| Cliffwalking-v0           |![Q-learning - CliffWalking-v0](Results/Q-learning_Cliffwalking-v0.png)|![SARSA - CliffWalking-v0](Results/SARSA_CliffWalking-v0.png)|![DQN - CliffWalking-v0](Results/DQN_CliffWalking-v0.png)||![PPO - CliffWalking-v0](Results/PPO_CliffWalking-v0.png)|
+| FrozenLake-v1             |![Q-learning - FrozenLake-v1](Results/Q-learning_FrozenLake-v1.png)|![SARSA - FrozenLake-v1](Results/SARSA_FrozenLake-v1.png)|![DQN - FrozenLake-v1](Results/DQN_FrozenLake-v1.png)||![PPO - FrozenLake-v1](Results/PPO_FrozenLake-v1.png)|
+| InvertedDoublePendulum-v5 ||||![DDPG - InvertedDoublePendulum-v5](Results/DDPG_InvertedDoublePendulum-v5.png)|![PPO - InvertedDoublePendulum-v5](Results/PPO_InvertedDoublePendulum-v5.png)|
+| InvertedPendulum-v5       ||||![DDPG - InvertedPendulum-v5](Results/DDPG_InvertedPendulum-v5.png)|![PPO - InvertedPendulum-v5](Results/PPO_InvertedPendulum-v5.png)|
+| Ant-v5                    ||||![DDPG - Ant-v5](Results/DDPG_Ant-v5.png)|![PPO - Ant-v5](Results/PPO_Ant-v5.png)|
+| Hopper-v5                 ||||![DDPG - Hopper-v5](Results/DDPG_Hopper-v5.png)|![PPO - Hopper-v5](Results/PPO_Hopper-v5.png)|
+| Humanoid-v5               ||||![DDPG - Humanoid-v5](Results/DDPG_Humanoid-v5.png)|![PPO - Humanoid-v5](Results/PPO_Humanoid-v5.png)|
+| HumanoidStandup-v5        ||||![DDPG - HumanoidStandup-v5](Results/DDPG_HumanoidStandup-v5.png)|![PPO - HumanoidStandup-v5](Results/PPO_HumanoidStandup-v5.png)|
+| Pusher-v5                 ||||![DDPG - Pusher-v5](Results/DDPG_Pusher-v5.png)|![PPO - Pusher-v5](Results/PPO_Pusher-v5.png)|
+| Reacher-v5                ||||![DDPG - Reacher-v5](Results/DDPG_Reacher-v5.png)|![PPO - Reacher-v5](Results/PPO_Reacher-v5.png)|
+| Swimmer-v5                ||||![DDPG - Swimmer-v5](Results/DDPG_Swimmer-v5.png)|![PPO - Swimmer-v5](Results/PPO_Swimmer-v5.png)|
+| Walker2d-v5               ||||![DDPG - Walker2d-v5](Results/DDPG_Walker2d-v5.png)|![PPO - Walker2d-v5](Results/PPO_Walker2d-v5.png)|
+
 
 All code is implemented in the PyTorch framework.
 
