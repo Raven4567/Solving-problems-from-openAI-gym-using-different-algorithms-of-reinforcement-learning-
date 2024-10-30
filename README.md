@@ -231,7 +231,7 @@ Graphic.show()
 | Pendulum-v1               ||||![DDPG - Pendulum-v1](Results/DDPG_Pendulum-v1.png)|![PPO - Pendulum-v1](Results/PPO_Pendulum-v1.png)|
 | Blackjack-v1              |||![DQN - Blackjack-v1](Results/DQN_Blackjack-v1.png)||![PPO - Blackjack-v1](Results/PPO_Blackjack-v1.png)|
 | Taxi-v3                   |![Q-learning - Taxi-v3](Results/Q-learning_Taxi-v3.png)|![SARSA - Taxi-v3](Results/SARSA_Taxi-v3.png)|![DQN - Taxi-v3](Results/DQN_Taxi-v3.png)||![PPO - Taxi-v3](Results/PPO_Taxi-v3.png)|
-| Cliffwalking-v0           |![Q-learning - CliffWalking-v0](Results/Q-learning_Cliffwalking-v0.png)|![SARSA - CliffWalking-v0](Results/SARSA_CliffWalking-v0.png)|![DQN - CliffWalking-v0](Results/DQN_CliffWalking-v0.png)||![PPO - CliffWalking-v0](Results/PPO_CliffWalking-v0.png)|
+| Cliffwalking-v0           |![Q-learning - CliffWalking-v0](Results/Q-learning_CliffWalking-v0.png)|![SARSA - CliffWalking-v0](Results/SARSA_CliffWalking-v0.png)|![DQN - CliffWalking-v0](Results/DQN_CliffWalking-v0.png)||![PPO - CliffWalking-v0](Results/PPO_CliffWalking-v0.png)|
 | FrozenLake-v1             |![Q-learning - FrozenLake-v1](Results/Q-learning_FrozenLake-v1.png)|![SARSA - FrozenLake-v1](Results/SARSA_FrozenLake-v1.png)|![DQN - FrozenLake-v1](Results/DQN_FrozenLake-v1.png)||![PPO - FrozenLake-v1](Results/PPO_FrozenLake-v1.png)|
 | InvertedDoublePendulum-v5 ||||![DDPG - InvertedDoublePendulum-v5](Results/DDPG_InvertedDoublePendulum-v5.png)|![PPO - InvertedDoublePendulum-v5](Results/PPO_InvertedDoublePendulum-v5.png)|
 | InvertedPendulum-v5       ||||![DDPG - InvertedPendulum-v5](Results/DDPG_InvertedPendulum-v5.png)|![PPO - InvertedPendulum-v5](Results/PPO_InvertedPendulum-v5.png)|
