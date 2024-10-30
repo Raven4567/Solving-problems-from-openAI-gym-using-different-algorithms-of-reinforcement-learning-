@@ -229,7 +229,7 @@ Graphic.show()
 | Cartpole-v1               |||![DQN - CartPole-v1](Results/DQN_CartPole-v1.png)||![PPO - CartPole-v1](Results/PPO_CartPole-v1.png)|
 | Acrobot-v1                |||![DQN - Acrobot-v1](Results/DQN_Acrobot-v1.png)||![PPO - Acrobot-v1](Results/PPO_Acrobot-v1.png)|
 | Pendulum-v1               ||||![DDPG - Pendulum-v1](Results/DDPG_Pendulum-v1.png)|![PPO - Pendulum-v1](Results/PPO_Pendulum-v1.png)|
-| Blackjack-v1              |||![DQN - Blackjack-v1](Results/DQN_Blackjack.png)||![PPO - Blackjack-v1](Results/PPO_Blackjack-v1.png)|
+| Blackjack-v1              |![Q-learning - Blackjack-v1](Results/Q_learning-Blackjack-v1.png)||![DQN - Blackjack-v1](Results/DQN_Blackjack-v1.png)||![PPO - Blackjack-v1](Results/PPO_Blackjack-v1.png)|
 | Taxi-v3                   |![Q-learning - Taxi-v3](Results/Q-learning_Taxi-v3.png)|![SARSA - Taxi-v3](Results/SARSA_Taxi-v3.png)|![DQN - Taxi-v3](Results/DQN_Taxi-v3.png)||![PPO - Taxi-v3](Results/PPO_Taxi-v3.png)|
 | Cliffwalking-v0           |![Q-learning - CliffWalking-v0](Results/Q-learning_Cliffwalking-v0.png)|![SARSA - CliffWalking-v0](Results/SARSA_CliffWalking-v0.png)|![DQN - CliffWalking-v0](Results/DQN_CliffWalking-v0.png)||![PPO - CliffWalking-v0](Results/PPO_CliffWalking-v0.png)|
 | FrozenLake-v1             |![Q-learning - FrozenLake-v1](Results/Q-learning_FrozenLake-v1.png)|![SARSA - FrozenLake-v1](Results/SARSA_FrozenLake-v1.png)|![DQN - FrozenLake-v1](Results/DQN_FrozenLake-v1.png)||![PPO - FrozenLake-v1](Results/PPO_FrozenLake-v1.png)|
