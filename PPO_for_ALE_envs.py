@@ -28,7 +28,7 @@ class ActorCritic(nn.Module):
         super().__init__()
 
         self.has_continuous = has_continuous # discrete or continuous
-
+        
         if self.has_continuous:
             self.action_scaling = tensor(action_scaling, dtype=t.float64, device=device) # for scaling dist.sample() if you're using continuous PPO
 
@@ -37,13 +37,26 @@ class ActorCritic(nn.Module):
             #self.action_var = torch.full(size=(action_dim,), fill_value=action_std_init ** 2, device=device) 
 
             self.max_log_of_std = t.log(self.action_scaling)
-                
+
             self.Actor = nn.Sequential(
-                nn.Linear(observ_dim, 64),
-                nn.ReLU(),
-                nn.Linear(64, 64),
-                nn.ReLU(),
-                        
+                nn.Conv2d(observ_dim, 64, kernel_size=3, stride=2),
+                nn.MaxPool2d(kernel_size=2),
+                nn.Conv2d(64, 64, kernel_size=3, stride=2),
+                nn.MaxPool2d(kernel_size=2),
+                nn.Conv2d(64, 32, kernel_size=3, stride=2),
+
+                nn.Flatten(),
+
+                nn.Sequential(
+                    nn.ReLU(),
+                    nn.Linear(896, 256),
+                    nn.ReLU(),
+                    nn.Linear(256, 128)
+                ),
+
+                nn.Linear(128, 64),
+                nn.ReLU()
+                
             ) # Initialization of actor if you're using continuous PPO
 
             self.mu_layer = nn.Linear(64, action_dim) # mu_layer for getting mean of actions
@@ -51,22 +64,47 @@ class ActorCritic(nn.Module):
 
         else:
             self.Actor = nn.Sequential(
-                nn.Linear(observ_dim, 64),
-                nn.ReLU(),
-                nn.Linear(64, 64),
+                nn.Conv2d(observ_dim, 64, kernel_size=3, stride=2),
+                nn.MaxPool2d(kernel_size=2),
+                nn.Conv2d(64, 64, kernel_size=3, stride=2),
+                nn.MaxPool2d(kernel_size=2),
+                nn.Conv2d(64, 32, kernel_size=3, stride=2),
+
+                nn.Flatten(),
+
+                nn.Sequential(
+                    nn.ReLU(),
+                    nn.Linear(896, 256),
+                    nn.ReLU(),
+                    nn.Linear(256, 128)
+                ),
+
+                nn.Linear(128, 64),
                 nn.ReLU(),
                 nn.Linear(64, action_dim),
                 nn.Softmax(dim=-1)
             ) # Initialization of actor if you're using discrete PPO
 
         self.Critic = nn.Sequential(
-            nn.Linear(observ_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Conv2d(observ_dim, 64, kernel_size=3, stride=2),
+            nn.MaxPool2d(kernel_size=2),
+            nn.Conv2d(64, 64, kernel_size=3, stride=2),
+            nn.MaxPool2d(kernel_size=2),
+            nn.Conv2d(64, 32, kernel_size=3, stride=2),
+
+            nn.Flatten(),
+
+            nn.Sequential(
+                nn.ReLU(),
+                nn.Linear(896, 256),
+                nn.ReLU(),
+                nn.Linear(256, 128)
+            ),
+
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 1)
         ) # Critic's initialization
-
 
         if self.has_continuous: # If our sequential model split up on: Actor, mu_layer and log_std
             nn.init.xavier_uniform_(self.mu_layer.weight)
@@ -132,7 +170,7 @@ class ActorCritic(nn.Module):
             dist = distributions.Categorical(probs)
 
         log_probs = dist.log_prob(action).sum(dim=-1) if self.has_continuous else dist.log_prob(action)
-        value = self.get_value(state).squeeze(1) # using a .squeeze(1) to transform tensor with shape [x, 1] to vector with shape [x]
+        value = self.get_value(state).squeeze(1) # using a .squeeze(1) to transform tensor with shape [x, 1] to vector with shape [200]
         dist_entropy = dist.entropy().sum(dim=-1) if self.has_continuous else dist.entropy()
 
         return log_probs, value, dist_entropy
@@ -189,14 +227,14 @@ class PPO:
             t.autograd.set_detect_anomaly(mode=True, check_nan=True)
 
     def get_action(self, state: tensor):
-        state = tensor(state, dtype=t.float32, device=device) # Transform numpy state to tensor state
+        state = tensor(state, dtype=t.float32, device=device).unsqueeze(0).unsqueeze(0) / 255.0 # Transform numpy state to tensor state
 
         with t.no_grad(): # torch.no_grad() for economy of resource
             dist = self.policy_old.get_dist(state)
 
         # action = dist.sample and scaling if has_continuous, else just dist.smaple()
         action = F.tanh(dist.sample()) * self.action_scaling if self.has_continuous else dist.sample()
-        value = self.policy_old.get_value(state).item()
+        value = self.policy_old.get_value(state).squeeze(0).item()
         log_prob = dist.log_prob(action).sum().item() if self.has_continuous else dist.log_prob(action).item()
 
         action = [a.item() for a in action] if self.has_continuous else action.item()
@@ -219,7 +257,7 @@ class PPO:
         return returns
 
     def education(self):
-        old_states = tensor(np.array(self.Memory.states), dtype=t.float32, device=device).detach()
+        old_states = (tensor(np.array(self.Memory.states), dtype=t.float32, device=device).unsqueeze(1) / 255.0).detach()
         old_actions = tensor(np.array(self.Memory.actions), dtype=t.float32, device=device).detach()
         old_log_probs = tensor(np.array(self.Memory.log_probs), dtype=t.float32, device=device).detach()
         old_values = tensor(np.array(self.Memory.values), dtype=t.float32, device=device).detach()
@@ -232,6 +270,9 @@ class PPO:
         next_value = state_values[-1].detach()
         returns = self.compute_gae(rewards, dones, state_values, next_value)
         returns = tensor(returns, dtype=t.float32, device=device).detach()
+        
+        # Normalazed rewards, or just GAE if we have only one element, 'cause it will lead to error
+        # returns = (returns - returns.mean()) / (returns.std() + 1e-7) if len(returns) > 1 else returns
 
         advantages = returns - old_values # calculate advantage
         for _ in range(self.k_epochs):

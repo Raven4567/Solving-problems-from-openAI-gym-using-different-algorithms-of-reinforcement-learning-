@@ -12,8 +12,7 @@ For data visualization, the code uses matplotlib charts, with a moving average a
 ```python
 from Q_learning import Q_learning
 
-Q_learning = Q_learning(Action_dim=env.action_space.n, 
-                        Observ_dim=env.observation_space.n, 
+Q_learning = Q_learning(Action_dim=env.action_space.n, Observ_dim=env.observation_space.n, 
                         episodes=EPISODES, eps=0.995, eps_min=0.005, gamma=0.99, lr=0.001)
 ```
 
@@ -21,8 +20,7 @@ Q_learning = Q_learning(Action_dim=env.action_space.n,
 ```python
 from SARSA import SARSA
 
-SARSA = SARSA(Action_dim=env.action_space.n, 
-              Observ_dim=env.observation_space.n, episodes=EPISODES, 
+SARSA = SARSA(Action_dim=env.action_space.n, Observ_dim=env.observation_space.n, episodes=EPISODES, 
               eps=0.995, eps_min=0.005, gamma=0.99, lr=0.001)
 ```
 
@@ -30,26 +28,18 @@ SARSA = SARSA(Action_dim=env.action_space.n,
 ```python
 from DQN import DQN
 
-DQN = DQN(Action_dim=env.action_space.n, 
-          Observ_dim=env.observation_space.shape[0],
-          episodes=EPISODES, lr=0.0005, eps=0.95, eps_min=0.05, 
-          maxlen_of_buffer=50000, batch_size=64, gamma=0.99, TAU=0.0005)
+DQN = DQN(Action_dim=env.action_space.n, Observ_dim=env.observation_space.shape[0],
+          episodes=EPISODES, lr=0.0005, eps=0.95, eps_min=0.05, maxlen_of_buffer=50000, batch_size=64, gamma=0.99, TAU=0.0005)
 ```
 
 ## Deep Deterministic Policy Gradient (DDPG):
 ```python
 from DDPG import DDPG
 
-DDPG = DDPG(max_action=0.4, min_action=-0.4, 
-
-            Action_dim=env.action_space.shape[0], 
-            Observ_dim=env.observation_space.shape[0],
-
-            Actor_lr=0.0003, Critic_lr=0.0025, 
-            batch_size=64, gamma=0.995, TAU=0.0005,
-            max_len_of_buffer=100000, 
-            
-            mu=0.0, sigma=0.08, theta=0.2)
+DDPG = DDPG(max_action=0.4, min_action=-0.4,
+            Action_dim=env.action_space.shape[0], Observ_dim=env.observation_space.shape[0],
+            Actor_lr=0.0003, Critic_lr=0.0025, batch_size=64, gamma=0.995, TAU=0.0005,
+            max_len_of_buffer=100000, mu=0.0, sigma=0.08, theta=0.2)
 ```
 
 ## Proximal Policy Optimization (PPO):
@@ -57,19 +47,10 @@ DDPG = DDPG(max_action=0.4, min_action=-0.4,
 from PPO import PPO
 
 PPO = PPO(
-    has_continuous=True, 
-    Action_dim=env.action_space.n, 
-    Observ_dim=env.observation_space.shape[0],
-
-    action_scaling=2.0, count_of_decay=EPISODES, 
-    action_std_init=1.4, action_std_min=0.005,
-
-    Actor_lr=0.0005, Critic_lr=0.0025, batch_size=64,
-    gamma=0.99, policy_clip=0.2, k_epochs=7)
+    has_continuous=True, Action_dim=env.action_space.n, Observ_dim=env.observation_space.shape[0],
+    action_scaling=2.0, Actor_lr=0.0005, Critic_lr=0.0025, 
+    batch_size=64, gamma=0.99, policy_clip=0.2, k_epochs=7)
 ```
-
-## A small addition for PPO initialization
-It can be either continuous or discrete. If you set ```has_continuous=True```, you must set ```action_scaling```, ```count_of_decay``` (```count_of_decay``` it's count of total calls ```PPO.call_action_std_decay()```, for all training loop, normally he's == count of episodes), ```action_std_init```, and ```action_std_min```. However, if you set ```has_continuous=False```, you don't need to set the aforementioned hyperparameters, you can set the aforementioned parameters to ```None``` or even don't specify, as they will be ignored anyway in ```PPO.__init__()``` 'cause they aren’t used in discrete PPO. You can also specify ```batch_size```, and call the ```PPO.education()``` method every few episodes, and even if you don't specify ```batch_size```, it will default to ```None```, and will using all buffer for update policy.
 
 # An example of exploitation:
 
@@ -192,7 +173,6 @@ def step(episode: int, pbar: object):
             break
     
     PPO.education()
-    PPO.call_action_std_decay() #If you using continuous PPO
 
 for episode in (pbar := tqdm(range(EPISODES))):
     step(episode+1, pbar)
