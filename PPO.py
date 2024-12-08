@@ -14,7 +14,15 @@ class Memory:
         self.dones = []
         self.values = []
         self.log_probs = []
-
+    
+    def push(self, state, action, reward, done, value, log_prob):
+        self.states.append(state)
+        self.actions.append(action)
+        self.rewards.append(reward)
+        self.dones.append(done)
+        self.values.append(value)
+        self.log_probs.append(log_prob)
+    
     def clear(self):
         del self.states[:]
         del self.actions[:]
@@ -40,9 +48,9 @@ class ActorCritic(nn.Module):
                 
             self.Actor = nn.Sequential(
                 nn.Linear(observ_dim, 64),
-                nn.ReLU(),
+                nn.ReLU6(),
                 nn.Linear(64, 64),
-                nn.ReLU(),
+                nn.ReLU6(),
                         
             ) # Initialization of actor if you're using continuous PPO
 
@@ -52,18 +60,18 @@ class ActorCritic(nn.Module):
         else:
             self.Actor = nn.Sequential(
                 nn.Linear(observ_dim, 64),
-                nn.ReLU(),
+                nn.ReLU6(),
                 nn.Linear(64, 64),
-                nn.ReLU(),
+                nn.ReLU6(),
                 nn.Linear(64, action_dim),
                 nn.Softmax(dim=-1)
             ) # Initialization of actor if you're using discrete PPO
 
         self.Critic = nn.Sequential(
             nn.Linear(observ_dim, 64),
-            nn.ReLU(),
+            nn.ReLU6(),
             nn.Linear(64, 64),
-            nn.ReLU(),
+            nn.ReLU6(),
             nn.Linear(64, 1)
         ) # Critic's initialization
 
@@ -132,7 +140,7 @@ class ActorCritic(nn.Module):
             dist = distributions.Categorical(probs)
 
         log_probs = dist.log_prob(action).sum(dim=-1) if self.has_continuous else dist.log_prob(action)
-        value = self.get_value(state).squeeze(1) # using a .squeeze(1) to transform tensor with shape [x, 1] to vector with shape [x]
+        value = self.get_value(state).squeeze(dim=-1) # using a .squeeze(1) to transform tensor with shape [x, 1] to vector with shape [x]
         dist_entropy = dist.entropy().sum(dim=-1) if self.has_continuous else dist.entropy()
 
         return log_probs, value, dist_entropy
@@ -140,8 +148,7 @@ class ActorCritic(nn.Module):
 class PPO:
     def __init__(self, has_continuous: bool, Action_dim: int, Observ_dim: int,  
                  action_scaling: float = None, Actor_lr: float = 0.001, Critic_lr: float = 0.0025, 
-                 #count_of_decay: int = None, action_std_init: float = None, action_std_min: float = None, 
-                 GAE_lambda: float = 0.95, gamma: float = 0.99, policy_clip: float = 0.2, k_epochs: int = 3, batch_size: int = None,
+                 GAE_lambda: float = 0.95, gamma: float = 0.99, policy_clip: float = 0.2, k_epochs: int = 14, batch_size: int = 512, mini_batch_size: int = 512,
                  is_debugging: bool = False
                  ):
 
@@ -149,9 +156,12 @@ class PPO:
         self.policy = ActorCritic(action_scaling, Action_dim, Observ_dim, has_continuous)
         self.policy_old = ActorCritic(action_scaling, Action_dim, Observ_dim, has_continuous)
 
-        self.Memory = Memory()
+        self.memory = Memory()
 
         self.policy_old.load_state_dict(self.policy.state_dict())
+
+        self.policy.train()
+        self.policy_old.eval()
 
         self.loss_fn = nn.MSELoss() # loss function, SmoothL1Loss for tasks of regression
         self.optimizer = optim.Adam([ # Optimizer AdamW for Actor&Critic
@@ -168,14 +178,9 @@ class PPO:
         self.has_continuous = has_continuous
 
         self.action_scaling = action_scaling
-
-            #self.count_of_decay = count_of_decay 
-            #
-            #self.action_std = action_std_init
-            #self.action_std_min = action_std_min
-            #self.action_std_decay = action_std_min ** (1/count_of_decay)
         
         self.batch_size = batch_size
+        self.mini_batch_size = mini_batch_size
 
         self.gamma = gamma
         self.policy_clip = policy_clip
@@ -202,6 +207,47 @@ class PPO:
         action = [a.item() for a in action] if self.has_continuous else action.item()
 
         return action, value, log_prob
+    
+    def batch_packer(self, values: tensor, batch_size: int):
+        batch = []
+
+        states, actions, log_probs, advantages, returns = values
+        states, actions, log_probs, advantages, returns = np.array(states.cpu()), np.array(actions.cpu()), np.array(log_probs.cpu()), np.array(advantages.cpu()), np.array(returns.cpu())
+
+        mini_batch_states = []
+        mini_batch_actions = []
+        mini_batch_log_probs = []
+        mini_batch_advantages = []
+        mini_batch_returns = []
+
+        while len(states) > 0:
+            unique_values_indexes = np.random.choice(a=np.arange(len(states)), replace=False, size=np.minimum(len(states), batch_size))
+
+            element_for_mini_batch_states = states[unique_values_indexes]
+            element_for_mini_batch_actions = actions[unique_values_indexes]
+            element_for_mini_batch_log_probs = log_probs[unique_values_indexes]
+            element_for_mini_batch_advantages = advantages[unique_values_indexes]
+            element_for_mini_batch_returns = returns[unique_values_indexes]
+
+            states = np.delete(states, unique_values_indexes, axis=0)
+            actions = np.delete(actions, unique_values_indexes, axis=0)
+            log_probs = np.delete(log_probs, unique_values_indexes, axis=0)
+            advantages = np.delete(advantages, unique_values_indexes, axis=0)
+            returns = np.delete(returns, unique_values_indexes, axis=0)
+
+            mini_batch_states.append(tensor(element_for_mini_batch_states, device=device))
+            mini_batch_actions.append(tensor(element_for_mini_batch_actions, device=device))
+            mini_batch_log_probs.append(tensor(element_for_mini_batch_log_probs, device=device))
+            mini_batch_advantages.append(tensor(element_for_mini_batch_advantages, device=device))
+            mini_batch_returns.append(tensor(element_for_mini_batch_returns, device=device))
+        
+        batch.append(mini_batch_states)
+        batch.append(mini_batch_actions)
+        batch.append(mini_batch_log_probs)
+        batch.append(mini_batch_advantages)
+        batch.append(mini_batch_returns)
+
+        return batch
 
     def compute_gae(self, rewards, dones, values, next_value):
         # Just computing of GAE.
@@ -219,13 +265,16 @@ class PPO:
         return returns
 
     def education(self):
-        old_states = tensor(np.array(self.Memory.states), dtype=t.float32, device=device).detach()
-        old_actions = tensor(np.array(self.Memory.actions), dtype=t.float32, device=device).detach()
-        old_log_probs = tensor(np.array(self.Memory.log_probs), dtype=t.float32, device=device).detach()
-        old_values = tensor(np.array(self.Memory.values), dtype=t.float32, device=device).detach()
+        if len(self.memory.states) < self.batch_size:
+            return 
+
+        old_states = tensor(np.array(self.memory.states), dtype=t.float32, device=device).detach()
+        old_actions = tensor(np.array(self.memory.actions), dtype=t.float32, device=device).detach()
+        old_log_probs = tensor(np.array(self.memory.log_probs), dtype=t.float32, device=device).detach()
+        old_values = tensor(np.array(self.memory.values), dtype=t.float32, device=device).detach()
         
-        rewards = np.array(self.Memory.rewards)
-        dones = np.array(self.Memory.dones)
+        rewards = np.array(self.memory.rewards)
+        dones = np.array(self.memory.dones)
 
         # Computing GAE
         state_values = self.policy.get_value(old_states).squeeze(dim=-1)
@@ -234,26 +283,49 @@ class PPO:
         returns = tensor(returns, dtype=t.float32, device=device).detach()
 
         advantages = returns - old_values # calculate advantage
+
+        batches = self.batch_packer([old_states, old_actions, old_log_probs, advantages, returns], batch_size=self.batch_size)
+
         for _ in range(self.k_epochs):
-
-            # Collecting log probs, values of states, and dist entropy
-            log_probs, state_values, dist_entropy = self.policy.get_evaluate(old_states, old_actions)
             
-            # calculating and clipping of log_probs, 'cause using of exp() function can will lead to inf or nan values
-            ratios = t.exp(t.clamp(log_probs - old_log_probs, min=-20, max=20))
-
-            surr1 = ratios * advantages # calculating of surr1
-            surr2 = t.clamp(ratios, min=1 - self.policy_clip, max=1 + self.policy_clip) * advantages  # clipping of ratios, where min is 1 - policy_clip, and max is 1 + policy_clip, next multiplying on advantages
-            
-            # gradient is loss of actor + 0.5 * loss of critic - 0.02 * dist_entropy. 0.02 is entropy bonus
-            loss = -t.min(surr1, surr2) + 0.5 * self.loss_fn(state_values, returns) - 0.02 * dist_entropy
-
             self.optimizer.zero_grad()
-            loss.mean().backward() # using mean of loss to back propagation
+
+            for old_states_for_batches, old_actions_for_batches, old_log_probs_for_batches, advantages_for_batches, returns_for_batches in zip(*batches):
+
+                mini_batches = self.batch_packer([old_states_for_batches, old_actions_for_batches, old_log_probs_for_batches, returns_for_batches, advantages_for_batches], batch_size=self.mini_batch_size)
+
+                old_states_for_mini_batches, old_actions_for_mini_batches, old_log_probs_for_mini_batches, returns_for_mini_bacthes, advantages_for_mini_batches = mini_batches
+
+                for batch_states, batch_actions, batch_log_probs, batch_returns, batch_advantages in zip(old_states_for_mini_batches, old_actions_for_mini_batches, old_log_probs_for_mini_batches, returns_for_mini_bacthes, advantages_for_mini_batches):
+                    # Collecting log probs, values of states, and dist entropy
+                    log_probs, state_values, dist_entropy = self.policy.get_evaluate(batch_states, batch_actions)
+                            
+                    # calculating and clipping of log_probs, 'cause using of exp() function can will lead to inf or nan values
+                    ratio = t.exp(t.clamp(log_probs - batch_log_probs, min=-20, max=20))
+
+                    surr1 = ratio * batch_advantages # calculating of surr1
+                    surr2 = t.clamp(ratio, min=1 - self.policy_clip, max=1 + self.policy_clip) * batch_advantages  # clipping of ratios, where min is 1 - policy_clip, and max is 1 + policy_clip, next multiplying on advantages
+                            
+                    # gradient is loss of actor + 0.5 * loss of critic - 0.02 * dist_entropy. 0.02 is entropy bonus
+                    loss = -t.min(surr1, surr2) + 0.5 * self.loss_fn(state_values, batch_returns) - 0.02 * dist_entropy
+
+                    loss.mean().backward() # using mean of loss to back propagation
+                
             nn.utils.clip_grad_value_(self.policy.Actor_parameters, 100) # cliping of actor parameters
             nn.utils.clip_grad_value_(self.policy.Critic_parameters, 100) # cliping of critic parameters
+                
             self.optimizer.step()
 
         self.policy_old.load_state_dict(self.policy.state_dict()) # load parameters of policy to policy_old
 
-        self.Memory.clear()
+        self.memory.clear()
+
+    def load_weights(self, path_to_file_with_weights: str):
+        try:
+            self.policy.load_state_dict(t.load(path_to_file_with_weights, weights_only=True))
+            self.policy_old.load_state_dict(self.policy.state_dict())
+        except FileNotFoundError:
+            pass
+    
+    def save_weights(self, path_to_file_with_weights: str):
+        t.save(self.policy.state_dict(), path_to_file_with_weights)
