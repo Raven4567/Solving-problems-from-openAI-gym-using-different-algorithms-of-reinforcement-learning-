@@ -1,10 +1,10 @@
 import torch as t
-from torch import nn, tensor, optim, device, distributions
+from torch import nn, tensor, optim, distributions
 import torch.nn.functional as F
 
 import numpy as np
 
-device = device('cuda' if t.cuda.is_available() else 'cpu')
+device = t.device('cuda' if t.cuda.is_available() else 'cpu')
 
 class Memory:
     def __init__(self):
@@ -12,23 +12,23 @@ class Memory:
         self.actions = []
         self.rewards = []
         self.dones = []
-        self.values = []
+        self.state_values = []
         self.log_probs = []
     
     def push(self, state, action, reward, done, value, log_prob):
-        self.states.append(state)
-        self.actions.append(action)
-        self.rewards.append(reward)
-        self.dones.append(done)
-        self.values.append(value)
-        self.log_probs.append(log_prob)
+        self.states.append(np.array(state, dtype=np.float32))
+        self.actions.append(np.array(action, dtype=np.float32))
+        self.rewards.append(np.array(reward, dtype=np.float32))
+        self.dones.append(np.array(done, dtype=np.float32))
+        self.state_values.append(np.array(value, dtype=np.float32))
+        self.log_probs.append(np.array(log_prob, dtype=np.float32))
     
     def clear(self):
         del self.states[:]
         del self.actions[:]
         del self.rewards[:]
         del self.dones[:]
-        del self.values[:]
+        del self.state_values[:]
         del self.log_probs[:]
 
 class ActorCritic(nn.Module):
@@ -84,13 +84,13 @@ class ActorCritic(nn.Module):
             nn.init.constant_(self.log_std.bias, 0)
 
         for layer in self.Actor: # xavier_initialization for actor 
-            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+            if isinstance(layer, (nn.Linear)):
                 nn.init.xavier_uniform_(layer.weight)
                 if layer.bias is not None:
                     nn.init.constant_(layer.bias, 0)
 
         for layer in self.Critic: # xavier_initialization for critic
-            if isinstance(layer, (nn.Conv2d, nn.Linear)):
+            if isinstance(layer, (nn.Linear)):
                 nn.init.xavier_uniform_(layer.weight)
                 if layer.bias is not None:
                     nn.init.constant_(layer.bias, 0)
@@ -145,16 +145,89 @@ class ActorCritic(nn.Module):
 
         return log_probs, value, dist_entropy
 
+class RND(nn.Module):
+    def __init__(self, in_features: int, out_features: int, beta: int = 0.02, k_epochs: int = 3):
+        super().__init__()
+
+        self.target_net = nn.Sequential(
+            nn.Linear(in_features, 64),
+            nn.ReLU6(),
+            nn.Linear(64, out_features)
+        )
+
+        self.pred_net = nn.Sequential(
+            nn.Linear(in_features, 64),
+            nn.ReLU6(),
+            nn.Linear(64, out_features)
+        )
+        
+        for param in self.target_net.parameters():
+            param.requires_grad = False
+
+        self.beta = tensor([beta], dtype=t.float32, device=device)
+        self.k_epochs = k_epochs
+
+        self.loss_fn = nn.MSELoss()
+        self.optimizer = optim.Adam(self.pred_net.parameters(), lr=0.001)
+        
+        self.to(device)
+    
+    def compute_intristic_reward(self, values):
+        target_batches = []
+        pred_batches = []
+
+        for i in values:
+            with t.no_grad():
+                targets = self.target_net(i)
+                preds = self.pred_net(i)
+
+            target_batches.append(targets)
+            pred_batches.append(preds)
+        
+        target_batches = t.cat(target_batches, dim=0)
+        pred_batches = t.cat(pred_batches, dim=0)
+
+        reward = t.norm(pred_batches - target_batches, dim=-1)
+
+        self.update_pred(values)
+
+        return reward * self.beta
+    
+    def update_pred(self, values):
+        self.pred_net.train()
+        
+        for _ in range(self.k_epochs):
+            for i in values:
+                with t.no_grad():
+                    targets = self.target_net(i)
+                preds = self.pred_net(i)
+
+                loss = self.loss_fn(preds, targets)
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+
+        self.pred_net.eval()
+
 class PPO:
     def __init__(self, has_continuous: bool, Action_dim: int, Observ_dim: int,  
                  action_scaling: float = None, Actor_lr: float = 0.001, Critic_lr: float = 0.0025, 
-                 GAE_lambda: float = 0.95, gamma: float = 0.99, policy_clip: float = 0.2, k_epochs: int = 14, batch_size: int = 512, mini_batch_size: int = 512,
-                 is_debugging: bool = False
+                 k_epochs: int = 23, policy_clip: float = 0.2, GAE_lambda: float = 0.95,
+                 gamma: float = 0.995, batch_size: int = 1024, mini_batch_size: int = 512, 
+                 use_RND: bool = False, beta: int = None
                  ):
 
         # Initializing the most important attributes of PPO.
         self.policy = ActorCritic(action_scaling, Action_dim, Observ_dim, has_continuous)
         self.policy_old = ActorCritic(action_scaling, Action_dim, Observ_dim, has_continuous)
+        if use_RND:
+            self.rnd = RND(in_features=Observ_dim, out_features=Observ_dim, beta=beta)
+
+        self.policy = t.compile(self.policy)
+        self.policy_old = t.compile(self.policy_old)
+        if use_RND:
+            self.rnd = t.compile(self.rnd)
 
         self.memory = Memory()
 
@@ -162,6 +235,8 @@ class PPO:
 
         self.policy.train()
         self.policy_old.eval()
+        if use_RND:
+            self.rnd.eval()
 
         self.loss_fn = nn.MSELoss() # loss function, SmoothL1Loss for tasks of regression
         self.optimizer = optim.Adam([ # Optimizer AdamW for Actor&Critic
@@ -181,17 +256,17 @@ class PPO:
         
         self.batch_size = batch_size
         self.mini_batch_size = mini_batch_size
-
         self.gamma = gamma
+        self.beta
+
         self.policy_clip = policy_clip
         self.k_epochs = k_epochs
         self.GAE_lambda = GAE_lambda
 
+        self.use_RND = use_RND
+
         self.action_dim = Action_dim
         self.observ_dim = Observ_dim
-        
-        if is_debugging:
-            t.autograd.set_detect_anomaly(mode=True, check_nan=True)
 
     def get_action(self, state: tensor):
         state = tensor(state, dtype=t.float32, device=device) # Transform numpy state to tensor state
@@ -199,55 +274,48 @@ class PPO:
         with t.no_grad(): # torch.no_grad() for economy of resource
             dist = self.policy_old.get_dist(state)
 
-        # action = dist.sample and scaling if has_continuous, else just dist.smaple()
-        action = F.tanh(dist.sample()) * self.action_scaling if self.has_continuous else dist.sample()
-        value = self.policy_old.get_value(state).item()
-        log_prob = dist.log_prob(action).sum().item() if self.has_continuous else dist.log_prob(action).item()
+            # action = dist.sample and scaling if has_continuous, else just dist.smaple()
+            action = F.tanh(dist.sample()) * self.action_scaling if self.has_continuous else dist.sample()
+            value = self.policy_old.get_value(state).squeeze(-1)
+            log_prob = dist.log_prob(action).sum(-1) if self.has_continuous else dist.log_prob(action)
 
-        action = [a.item() for a in action] if self.has_continuous else action.item()
-
-        return action, value, log_prob
+        return action.cpu().numpy(), value.cpu().numpy(), log_prob.cpu().numpy()
     
-    def batch_packer(self, values: tensor, batch_size: int):
+    def batch_packer(self, values: list, batch_size: int):
         batch = []
 
-        states, actions, log_probs, advantages, returns = values
-        states, actions, log_probs, advantages, returns = np.array(states.cpu()), np.array(actions.cpu()), np.array(log_probs.cpu()), np.array(advantages.cpu()), np.array(returns.cpu())
+        values = [i.detach().cpu().numpy() for i in values]
 
-        mini_batch_states = []
-        mini_batch_actions = []
-        mini_batch_log_probs = []
-        mini_batch_advantages = []
-        mini_batch_returns = []
+        mini_batches = [[] for _ in range(len(values))]
 
-        while len(states) > 0:
-            unique_values_indexes = np.random.choice(a=np.arange(len(states)), replace=False, size=np.minimum(len(states), batch_size))
+        while len(values[0]) > 0:
+            unique_values_indexes = np.random.choice(a=np.arange(len(values[0])), replace=False, size=np.minimum(len(values[0]), batch_size))
 
-            element_for_mini_batch_states = states[unique_values_indexes]
-            element_for_mini_batch_actions = actions[unique_values_indexes]
-            element_for_mini_batch_log_probs = log_probs[unique_values_indexes]
-            element_for_mini_batch_advantages = advantages[unique_values_indexes]
-            element_for_mini_batch_returns = returns[unique_values_indexes]
+            elements_for_mini_batches = [value[unique_values_indexes] for value in values]
 
-            states = np.delete(states, unique_values_indexes, axis=0)
-            actions = np.delete(actions, unique_values_indexes, axis=0)
-            log_probs = np.delete(log_probs, unique_values_indexes, axis=0)
-            advantages = np.delete(advantages, unique_values_indexes, axis=0)
-            returns = np.delete(returns, unique_values_indexes, axis=0)
+            values = [np.delete(value, unique_values_indexes, axis=0) for value in values]
 
-            mini_batch_states.append(tensor(element_for_mini_batch_states, device=device))
-            mini_batch_actions.append(tensor(element_for_mini_batch_actions, device=device))
-            mini_batch_log_probs.append(tensor(element_for_mini_batch_log_probs, device=device))
-            mini_batch_advantages.append(tensor(element_for_mini_batch_advantages, device=device))
-            mini_batch_returns.append(tensor(element_for_mini_batch_returns, device=device))
+            [mini_batches[index].append(t.from_numpy(elements_for_mini_batches[index]).to(device)) for index in range(len(values))]
         
-        batch.append(mini_batch_states)
-        batch.append(mini_batch_actions)
-        batch.append(mini_batch_log_probs)
-        batch.append(mini_batch_advantages)
-        batch.append(mini_batch_returns)
+        [batch.append(mini_batches[index]) for index in range(len(values))]
 
         return batch
+
+    def single_batch_packer(self, value: tensor, batch_size: int):
+        value = value.detach().cpu().numpy()
+
+        mini_batches = []
+
+        while len(value) > 0:
+            unique_values_indexes = np.random.choice(a=np.arange(len(value)), replace=False, size=np.minimum(len(value), batch_size))
+
+            element_for_mini_batch = value[unique_values_indexes]
+    
+            value = np.delete(value, unique_values_indexes, axis=0)
+
+            mini_batches.append(t.from_numpy(element_for_mini_batch).to(device))
+
+        return mini_batches
 
     def compute_gae(self, rewards, dones, values, next_value):
         # Just computing of GAE.
@@ -268,64 +336,79 @@ class PPO:
         if len(self.memory.states) < self.batch_size:
             return 
 
-        old_states = tensor(np.array(self.memory.states), dtype=t.float32, device=device).detach()
-        old_actions = tensor(np.array(self.memory.actions), dtype=t.float32, device=device).detach()
-        old_log_probs = tensor(np.array(self.memory.log_probs), dtype=t.float32, device=device).detach()
-        old_values = tensor(np.array(self.memory.values), dtype=t.float32, device=device).detach()
+        old_states = t.from_numpy(np.array(self.memory.states)).to(device).detach()
+        old_actions = t.from_numpy(np.array(self.memory.actions)).to(device).detach()
+        old_log_probs = t.from_numpy(np.array(self.memory.log_probs)).to(device).detach()
+        old_values = t.from_numpy(np.array(self.memory.state_values)).to(device).detach()
         
-        rewards = np.array(self.memory.rewards)
+        if self.use_RND:
+            rewards = (
+                t.from_numpy(np.array(self.memory.rewards)).to(device) + \
+                self.rnd.compute_intristic_reward(
+                    self.single_batch_packer(old_states, self.mini_batch_size)
+                    )
+                ).cpu().numpy()
+
+        else:
+            rewards = np.array(self.memory.rewards)
         dones = np.array(self.memory.dones)
 
+        self.memory.clear()
+
         # Computing GAE
-        state_values = self.policy.get_value(old_states).squeeze(dim=-1)
-        next_value = state_values[-1].detach()
+        state_values = t.cat([self.policy.get_value(i).squeeze(dim=-1) for i in self.single_batch_packer(old_states, self.mini_batch_size)], dim=0).detach().cpu().numpy()
+        next_value = state_values[-1]
+        
         returns = self.compute_gae(rewards, dones, state_values, next_value)
-        returns = tensor(returns, dtype=t.float32, device=device).detach()
+        returns = t.from_numpy(np.array(returns)).to(device)
 
         advantages = returns - old_values # calculate advantage
 
         batches = self.batch_packer([old_states, old_actions, old_log_probs, advantages, returns], batch_size=self.batch_size)
-
+        
         for _ in range(self.k_epochs):
-            
-            self.optimizer.zero_grad()
 
-            for old_states_for_batches, old_actions_for_batches, old_log_probs_for_batches, advantages_for_batches, returns_for_batches in zip(*batches):
+            t.cuda.empty_cache() if device == 'cuda' else 0
 
-                mini_batches = self.batch_packer([old_states_for_batches, old_actions_for_batches, old_log_probs_for_batches, returns_for_batches, advantages_for_batches], batch_size=self.mini_batch_size)
+            for old_states_batches, old_actions_batches, old_log_probs_batches, advantages_batches, returns_batches in zip(*batches):
+                self.optimizer.zero_grad()
 
-                old_states_for_mini_batches, old_actions_for_mini_batches, old_log_probs_for_mini_batches, returns_for_mini_bacthes, advantages_for_mini_batches = mini_batches
-
-                for batch_states, batch_actions, batch_log_probs, batch_returns, batch_advantages in zip(old_states_for_mini_batches, old_actions_for_mini_batches, old_log_probs_for_mini_batches, returns_for_mini_bacthes, advantages_for_mini_batches):
+                mini_batches = self.batch_packer([old_states_batches, old_actions_batches, old_log_probs_batches, advantages_batches, returns_batches], batch_size=self.mini_batch_size)
+                
+                for mini_batch_states, mini_batch_actions, mini_batch_log_probs, mini_batch_advantages, mini_batch_returns in zip(*mini_batches):
                     # Collecting log probs, values of states, and dist entropy
-                    log_probs, state_values, dist_entropy = self.policy.get_evaluate(batch_states, batch_actions)
+                    log_probs, state_values, dist_entropy = self.policy.get_evaluate(mini_batch_states, mini_batch_actions)
                             
                     # calculating and clipping of log_probs, 'cause using of exp() function can will lead to inf or nan values
-                    ratio = t.exp(t.clamp(log_probs - batch_log_probs, min=-20, max=20))
+                    ratios = t.exp(t.clamp(log_probs - mini_batch_log_probs, min=-20, max=20))
 
-                    surr1 = ratio * batch_advantages # calculating of surr1
-                    surr2 = t.clamp(ratio, min=1 - self.policy_clip, max=1 + self.policy_clip) * batch_advantages  # clipping of ratios, where min is 1 - policy_clip, and max is 1 + policy_clip, next multiplying on advantages
+                    surr1 = ratios * mini_batch_advantages # calculating of surr1
+                    surr2 = t.clamp(ratios, min=1 - self.policy_clip, max=1 + self.policy_clip) * mini_batch_advantages  # clipping of ratios, where min is 1 - policy_clip, and max is 1 + policy_clip, next multiplying on advantages
                             
                     # gradient is loss of actor + 0.5 * loss of critic - 0.02 * dist_entropy. 0.02 is entropy bonus
-                    loss = -t.min(surr1, surr2) + 0.5 * self.loss_fn(state_values, batch_returns) - 0.02 * dist_entropy
-
+                    loss = -t.min(surr1, surr2) + 0.5 * self.loss_fn(state_values, mini_batch_returns) - 0.02 * dist_entropy
+                    
                     loss.mean().backward() # using mean of loss to back propagation
-                
-            nn.utils.clip_grad_value_(self.policy.Actor_parameters, 100) # cliping of actor parameters
-            nn.utils.clip_grad_value_(self.policy.Critic_parameters, 100) # cliping of critic parameters
-                
-            self.optimizer.step()
+
+                nn.utils.clip_grad_value_(self.policy.Actor_parameters, 100) # cliping of actor parameters
+                nn.utils.clip_grad_value_(self.policy.Critic_parameters, 100) # cliping of critic parameters           
+                self.optimizer.step()
 
         self.policy_old.load_state_dict(self.policy.state_dict()) # load parameters of policy to policy_old
 
-        self.memory.clear()
-
-    def load_weights(self, path_to_file_with_weights: str):
+    def load_weights(self, storage_path: str):
         try:
-            self.policy.load_state_dict(t.load(path_to_file_with_weights, weights_only=True))
+            self.policy.load_state_dict(t.load(storage_path+'/Policy_weights.pth', weights_only=True))
             self.policy_old.load_state_dict(self.policy.state_dict())
+            
+            if self.use_RND:            
+                self.rnd.load_state_dict(t.load(storage_path+'/RND_weights.pth', weights_only=True))
+
         except FileNotFoundError:
             pass
     
-    def save_weights(self, path_to_file_with_weights: str):
-        t.save(self.policy.state_dict(), path_to_file_with_weights)
+    def save_weights(self, storage_path: str):
+        t.save(self.policy.state_dict(), storage_path+'/Policy_weights.pth')
+
+        if self.use_RND:
+            t.save(self.rnd.state_dict(), storage_path+'/RND_weights.pth')

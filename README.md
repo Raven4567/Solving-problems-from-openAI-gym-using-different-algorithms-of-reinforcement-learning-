@@ -2,8 +2,6 @@
 
 This repository is a collection of various reinforcement learning algorithms, ranging from simple Q-learning to PPO (Proximal Policy Optimization), designed for training in OpenAI Gym environments.
 
-I've significantly refactored the code and they is standardized now, so that the implementations can now be easily imported as modules and used in other programs. Although this code is primarily created for beginners like myself, I’ve also revised the PPO implementation to combine both continuous and discrete versions.
-
 For data visualization, the code uses matplotlib charts, with a moving average added for smoother visuals. The original data graph is semi-transparent, while the smoothed graph has a more vivid color.
 
 # Usage:
@@ -47,10 +45,18 @@ DDPG = DDPG(max_action=0.4, min_action=-0.4,
 from PPO import PPO
 
 PPO = PPO(
-    has_continuous=True, Action_dim=env.action_space.shape[0], Observ_dim=env.observation_space.shape[0],
-    action_scaling=2.0, Actor_lr=0.0005, Critic_lr=0.0025, 
-    gamma=0.99, policy_clip=0.2, k_epochs=7, batch_size=512, mini_batch_size=64)
+    has_continuous: bool, Action_dim: int, Observ_dim: int,  
+    action_scaling: float = None, Actor_lr: float = 0.001, Critic_lr: float = 0.0025, 
+    k_epochs: int = 23, policy_clip: float = 0.2, GAE_lambda: float = 0.95,
+    gamma: float = 0.995, batch_size: int = 1024, mini_batch_size: int = 512, 
+    use_RND: bool = False, beta: int = 0.02)
 ```
+
+### Small addition about RND and beta parameters for PPO:
+`RND` is the *Random-Network-Destilation* approach developed by **OpenAI** to exploring an large-scale environment like **Atari** games, where the states are a pixel images.
+More read: [Reinforcement learning with prediction-based rewards](https://openai.com/index/reinforcement-learning-with-prediction-based-rewards/#main)
+
+`Beta` is parameter which we multiplying `RND`'s rewards, because if they'll be too big, our agent will cycle on getting of `intrinsic rewards` of `RND`, instead `extrinsic rewards` of an environment. Beta is needs to don't let `intrinsic rewards` dominate over `extrinsic rewards`.
 
 # An example of exploitation:
 
@@ -252,30 +258,7 @@ For show your final result of learning, use:
 ```python
 Graphic.show()
 ```
-Calling after all episodes.
-
-# Results of various algorithms across different environments:
-|        Environment        | Q-learning | SARSA  | DQN | DDPG | PPO |
-|---------------------------|------------|--------|-----|------|-----|
-| Cartpole-v1               |||![DQN - CartPole-v1](Results/DQN_CartPole-v1.png)||![PPO - CartPole-v1](Results/PPO_CartPole-v1.png)|
-| Acrobot-v1                |||![DQN - Acrobot-v1](Results/DQN_Acrobot-v1.png)||![PPO - Acrobot-v1](Results/PPO_Acrobot-v1.png)|
-| Pendulum-v1               ||||![DDPG - Pendulum-v1](Results/DDPG_Pendulum-v1.png)|![PPO - Pendulum-v1](Results/PPO_Pendulum-v1.png)|
-| Blackjack-v1              |||![DQN - Blackjack-v1](Results/DQN_Blackjack-v1.png)||![PPO - Blackjack-v1](Results/PPO_Blackjack-v1.png)|
-| Taxi-v3                   |![Q-learning - Taxi-v3](Results/Q-learning_Taxi-v3.png)|![SARSA - Taxi-v3](Results/SARSA_Taxi-v3.png)|![DQN - Taxi-v3](Results/DQN_Taxi-v3.png)||![PPO - Taxi-v3](Results/PPO_Taxi-v3.png)|
-| Cliffwalking-v0           |![Q-learning - CliffWalking-v0](Results/Q-learning_CliffWalking-v0.png)|![SARSA - CliffWalking-v0](Results/SARSA_CliffWalking-v0.png)|![DQN - CliffWalking-v0](Results/DQN_CliffWalking-v0.png)||![PPO - CliffWalking-v0](Results/PPO_CliffWalking-v0.png)|
-| FrozenLake-v1             |![Q-learning - FrozenLake-v1](Results/Q-learning_FrozenLake-v1.png)|![SARSA - FrozenLake-v1](Results/SARSA_FrozenLake-v1.png)|![DQN - FrozenLake-v1](Results/DQN_FrozenLake-v1.png)||![PPO - FrozenLake-v1](Results/PPO_FrozenLake-v1.png)|
-| InvertedDoublePendulum-v5 ||||![DDPG - InvertedDoublePendulum-v5](Results/DDPG_InvertedDoublePendulum-v5.png)|![PPO - InvertedDoublePendulum-v5](Results/PPO_InvertedDoublePendulum-v5.png)|
-| InvertedPendulum-v5       ||||![DDPG - InvertedPendulum-v5](Results/DDPG_InvertedPendulum-v5.png)|![PPO - InvertedPendulum-v5](Results/PPO_InvertedPendulum-v5.png)|
-| Ant-v5                    ||||![DDPG - Ant-v5](Results/DDPG_Ant-v5.png)|![PPO - Ant-v5](Results/PPO_Ant-v5.png)|
-| Hopper-v5                 ||||![DDPG - Hopper-v5](Results/DDPG_Hopper-v5.png)|![PPO - Hopper-v5](Results/PPO_Hopper-v5.png)|
-| Humanoid-v5               ||||![DDPG - Humanoid-v5](Results/DDPG_Humanoid-v5.png)|![PPO - Humanoid-v5](Results/PPO_Humanoid-v5.png)|
-| HumanoidStandup-v5        ||||![DDPG - HumanoidStandup-v5](Results/DDPG_HumanoidStandup-v5.png)|![PPO - HumanoidStandup-v5](Results/PPO_HumanoidStandup-v5.png)|
-| Pusher-v5                 ||||![DDPG - Pusher-v5](Results/DDPG_Pusher-v5.png)|![PPO - Pusher-v5](Results/PPO_Pusher-v5.png)|
-| Reacher-v5                ||||![DDPG - Reacher-v5](Results/DDPG_Reacher-v5.png)|![PPO - Reacher-v5](Results/PPO_Reacher-v5.png)|
-| Swimmer-v5                ||||![DDPG - Swimmer-v5](Results/DDPG_Swimmer-v5.png)|![PPO - Swimmer-v5](Results/PPO_Swimmer-v5.png)|
-| Walker2d-v5               ||||![DDPG - Walker2d-v5](Results/DDPG_Walker2d-v5.png)|![PPO - Walker2d-v5](Results/PPO_Walker2d-v5.png)|
-
 
 All code is implemented in the PyTorch framework.
 
-References: https://github.com/nikhilbarhate99/PPO-PyTorch/tree/master, GPT-4o and GPT-4o mini (just a little).
+References: https://github.com/nikhilbarhate99/PPO-PyTorch/tree/master/
