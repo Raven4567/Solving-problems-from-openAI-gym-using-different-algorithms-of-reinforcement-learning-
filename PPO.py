@@ -257,13 +257,13 @@ class PPO:
         self.batch_size = batch_size
         self.mini_batch_size = mini_batch_size
         self.gamma = gamma
-        self.beta
 
         self.policy_clip = policy_clip
         self.k_epochs = k_epochs
         self.GAE_lambda = GAE_lambda
 
         self.use_RND = use_RND
+        self.beta = beta
 
         self.action_dim = Action_dim
         self.observ_dim = Observ_dim

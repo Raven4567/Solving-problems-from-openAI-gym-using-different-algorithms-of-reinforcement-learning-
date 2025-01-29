@@ -223,7 +223,7 @@ class PPO:
         self.policy = ActorCritic(action_scaling, Action_dim, Count_of_channels, has_continuous)
         self.policy_old = ActorCritic(action_scaling, Action_dim, Count_of_channels, has_continuous)
         if use_RND:
-            self.rnd = RND(Count_of_channels, out_features=8, beta=beta)
+            self.rnd = RND(Count_of_channels, out_features=32, beta=beta)
         
         self.policy = t.compile(self.policy)
         self.policy_old = t.compile(self.policy_old)
@@ -260,6 +260,7 @@ class PPO:
         self.gamma = gamma
 
         self.use_RND = use_RND
+        self.beta = beta
 
         self.policy_clip = policy_clip
         self.k_epochs = k_epochs
