@@ -34,13 +34,13 @@ class Memory:
         del self.log_probs[:]
 
 class ActorCritic(nn.Module):
-    def __init__(self, action_scaling: float, action_dim: int, Count_of_channels: int, has_continuous: bool):
+    def __init__(self, action_scaling: float, action_dim: int, in_channels: int, has_continuous: bool):
         super().__init__()
 
         self.has_continuous = has_continuous # discrete or continuous
         
         if self.has_continuous:
-            self.action_scaling = tensor(action_scaling, dtype=t.float64, device=device) # for scaling dist.sample() if you're using continuous PPO
+            self.action_scaling = tensor(action_scaling, dtype=t.float32, device=device) # for scaling dist.sample() if you're using continuous PPO
 
             # action_std_init and action_var for exploration of environment
             #self.action_std_init = action_std_init
@@ -49,7 +49,7 @@ class ActorCritic(nn.Module):
             self.max_log_of_std = t.log(self.action_scaling)
 
             self.Actor = models.mobilenet_v3_small() # Initialization of actor if you're using continuous PPO
-            self.Actor.features[0][0] = nn.Conv2d(Count_of_channels, 16, kernel_size=3, stride=2, padding=1, bias=False)
+            self.Actor.features[0][0] = nn.Conv2d(in_channels, kernel_size=3, stride=2, padding=1, bias=False)
             self.Actor.classifier = self.Actor.classifier[:-1]
 
             self.mu_layer = nn.Linear(1024, action_dim) # mu_layer for getting mean of actions
@@ -57,12 +57,12 @@ class ActorCritic(nn.Module):
 
         else:
             self.Actor = models.mobilenet_v3_small() # Initialization of actor if you're using discrete PPO
-            self.Actor.features[0][0] = nn.Conv2d(Count_of_channels, 16, kernel_size=3, stride=2, padding=1, bias=False)
+            self.Actor.features[0][0] = nn.Conv2d(in_channels, kernel_size=3, stride=2, padding=1, bias=False)
             self.Actor.classifier[-1] = nn.Linear(1024, action_dim)
             self.Actor.classifier = nn.Sequential(*list(self.Actor.classifier), nn.Softmax(dim=-1))
 
         self.Critic = models.mobilenet_v3_small()
-        self.Critic.features[0][0] = nn.Conv2d(Count_of_channels, 16, kernel_size=3, stride=2, padding=1, bias=False)
+        self.Critic.features[0][0] = nn.Conv2d(in_channels, kernel_size=3, stride=2, padding=1, bias=False)
         self.Critic.classifier[-1] = nn.Linear(1024, 1)
 
         if self.has_continuous: # If our sequential model split up on: Actor, mu_layer and log_std
@@ -212,7 +212,7 @@ class RND(nn.Module):
         self.pred_net.eval()
 
 class PPO:
-    def __init__(self, has_continuous: bool, Action_dim: int, Count_of_channels: int,  
+    def __init__(self, has_continuous: bool, Action_dim: int, in_channels: int,  
                  action_scaling: float = None, Actor_lr: float = 0.001, Critic_lr: float = 0.0025, 
                  k_epochs: int = 23, policy_clip: float = 0.2, GAE_lambda: float = 0.95,
                  gamma: float = 0.995, batch_size: int = 1024, mini_batch_size: int = 512, 
@@ -220,10 +220,10 @@ class PPO:
                  ):
 
         # Initializing the most important attributes of PPO.
-        self.policy = ActorCritic(action_scaling, Action_dim, Count_of_channels, has_continuous)
-        self.policy_old = ActorCritic(action_scaling, Action_dim, Count_of_channels, has_continuous)
+        self.policy = ActorCritic(action_scaling, Action_dim, in_channels, has_continuous)
+        self.policy_old = ActorCritic(action_scaling, Action_dim, in_channels, has_continuous)
         if use_RND:
-            self.rnd = RND(Count_of_channels, out_features=32, beta=beta)
+            self.rnd = RND(in_channels, out_features=32, beta=beta)
         
         self.policy = t.compile(self.policy)
         self.policy_old = t.compile(self.policy_old)
@@ -267,7 +267,7 @@ class PPO:
         self.GAE_lambda = GAE_lambda
 
         self.action_dim = Action_dim
-        self.count_of_channels = Count_of_channels
+        self.in_channels = in_channels
 
     def get_action(self, state: tensor):
         state = tensor(state, dtype=t.float32, device=device).unsqueeze(0).unsqueeze(0) / 255.0 # Transform numpy state to tensor state
@@ -275,12 +275,10 @@ class PPO:
         with t.no_grad(): # torch.no_grad() for economy of resource
             dist = self.policy_old.get_dist(state)
 
-        # action = dist.sample and scaling if has_continuous, else just dist.smaple()
-        action = F.tanh(dist.sample()) * self.action_scaling if self.has_continuous else dist.sample()
-        state_value = self.policy_old.get_value(state).squeeze(0).item()
-        log_prob = dist.log_prob(action).sum().item() if self.has_continuous else dist.log_prob(action).item()
-
-        action = [a.item() for a in action] if self.has_continuous else action.item()
+            # action = dist.sample and scaling if has_continuous, else just dist.smaple()
+            action = F.tanh(dist.sample()) * self.action_scaling if self.has_continuous else dist.sample()
+            state_value = self.policy_old.get_value(state).squeeze(0)
+            log_prob = dist.log_prob(action).sum().item() if self.has_continuous else dist.log_prob(action)
 
         return action.cpu().numpy(), state_value.cpu().numpy(), log_prob.cpu().numpy()
 
