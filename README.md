@@ -10,33 +10,33 @@ For data visualization, the code uses matplotlib charts, with a moving average a
 ```python
 from Q_learning import Q_learning
 
-Q_learning = Q_learning(Action_dim=env.action_space.n, Observ_dim=env.observation_space.n, 
-                        episodes=EPISODES, eps=0.995, eps_min=0.005, gamma=0.99, lr=0.001)
+q_learning = Q_learning(action_dim=env.action_space.n, observ_dim=env.observation_space.n, 
+                        episodes=EPISODES, eps_start=0.995, eps_end=0.005, gamma=0.995, lr=0.001)
 ```
 
 ## SARSA:
 ```python
 from SARSA import SARSA
 
-SARSA = SARSA(Action_dim=env.action_space.n, Observ_dim=env.observation_space.n, episodes=EPISODES, 
-              eps=0.995, eps_min=0.005, gamma=0.99, lr=0.001)
+sarsa = SARSA(action_dim=env.action_space.n, observ_dim=env.observation_space.n, episodes=EPISODES, 
+              eps_start=0.995, eps_end=0.005, gamma=0.995, lr=0.001)
 ```
 
 ## Deep Q-Networks (DQN):
 ```python
 from DQN import DQN
 
-DQN = DQN(Action_dim=env.action_space.n, Observ_dim=env.observation_space.shape[0],
-          episodes=EPISODES, lr=0.0005, eps=0.95, eps_min=0.05, maxlen_of_buffer=50000, batch_size=64, gamma=0.99, TAU=0.0005)
+dqn = DQN(action_dim=env.action_space.n, observ_dim=env.observation_space.shape[0],
+          episodes=EPISODES, lr=0.001, eps_start=0.995, eps_end=0.05, maxlen_of_buffer=50000, batch_size=64, gamma=0.995, TAU=0.0005)
 ```
 
 ## Deep Deterministic Policy Gradient (DDPG):
 ```python
 from DDPG import DDPG
 
-DDPG = DDPG(max_action=0.4, min_action=-0.4,
-            Action_dim=env.action_space.shape[0], Observ_dim=env.observation_space.shape[0],
-            Actor_lr=0.0003, Critic_lr=0.0025, batch_size=64, gamma=0.995, TAU=0.0005,
+ddpg = DDPG(max_action=0.4, min_action=-0.4,
+            action_dim=env.action_space.shape[0], observ_dim=env.observation_space.shape[0],
+            Actor_lr=0.0010, Critic_lr=0.0025, batch_size=64, gamma=0.995, TAU=0.0005,
             max_len_of_buffer=100000, mu=0.0, sigma=0.08, theta=0.2)
 ```
 
@@ -44,9 +44,9 @@ DDPG = DDPG(max_action=0.4, min_action=-0.4,
 ```python
 from PPO import PPO
 
-PPO = PPO(
+ppo = PPO(
     has_continuous: bool, Action_dim: int, Observ_dim: int,  
-    action_scaling: float = None, Actor_lr: float = 0.001, Critic_lr: float = 0.0025, 
+    Actor_lr: float = 0.0010, Critic_lr: float = 0.0025, action_scaling: float = None,
     k_epochs: int = 23, policy_clip: float = 0.2, GAE_lambda: float = 0.95,
     gamma: float = 0.995, batch_size: int = 1024, mini_batch_size: int = 512, 
     use_RND: bool = False, beta: int = 0.02)
@@ -62,92 +62,76 @@ More read: [Reinforcement learning with prediction-based rewards](https://openai
 
 ## For Q-learning:
 ```python
-def step(episode: int, pbar: object):
+def step():
     state = env.reset()[0]
-
-    reward_per_episode = 0
 
     while True:
         action = Q_learning.get_action(state)
 
         next_state, reward, done, truncate, _ = env.step(action) 
             
-        pbar.set_description(f"state: {state}, action: {action}, eps: {Q_learning.eps: .3f}, reward: {reward: .2f}, done: {done or truncate}")
-            
         Q_learning.update_Q_table(state, action, reward, next_state, done)
             
         state = next_state
-
-        reward_per_episode += reward
 
         if done or truncate:
             break
         
     Q_learning.call_epsilon_decay()
 
-for episode in (pbar := tqdm(range(EPISODES))):
-    step(episode+1, pbar)
+for episode in tqdm(range(EPISODES)):
+    step()
 
 env.close()
 ```
 
 ## For SARSA:
 ```python
-def step(episode: int, pbar: object):
+def step():
     state = env.reset()[0]
-
-    reward_per_episode = 0
 
     while True:
         action = SARSA.get_action(state)
 
         next_state, reward, done, truncate, _ = env.step(action) 
             
-        pbar.set_description(f"state: {state}, action: {action}, eps: {SARSA.eps: .3f}, reward: {reward: .2f}, done: {done or truncate}")
-            
         SARSA.update_Q_table(state, action, reward, next_state, done)
             
         state = next_state
-
-        reward_per_episode += reward
 
         if done or truncate:
             break
         
     SARSA.call_epsilon_decay()
 
-for episode in (pbar := tqdm(range(EPISODES))):
-    step(episode+1, pbar)
+for episode in tqdm(range(EPISODES)):
+    step()
 
 env.close()
 ```
 
 ## For DQN:
 ```python
-def step(episode: int, pbar: object):
+def step():
     state = env.reset()[0]
 
     steps = 1
-    reward_per_episode = 0
 
     while True:
         action = DQN.get_action(state)
 
         next_state, reward, done, truncate, _ = env.step(action) 
             
-        pbar.set_description(f"state: {state}, action: {action}, eps: {DQN.eps: .3f}, reward: {reward: .2f}, done: {done or truncate}")
-            
         DQN.buffer.push([state, action, reward, next_state])
 
         state = next_state
 
-        reward_per_episode += reward
         steps += 1
 
         if steps % 5 == 0:
             DQN.education()
             
-        if steps % 50 == 0:
+        elif steps % 50 == 0:
             DQN.soft_update()
 
         if done or truncate:
@@ -155,46 +139,42 @@ def step(episode: int, pbar: object):
         
     DQN.call_epsilon_decay()
 
-for episode in (pbar := tqdm(range(EPISODES))):
-    step(episode+1, pbar)
+for episode in tqdm(range(EPISODES)):
+    step()
 
 env.close()
 ```
 ## For DDPG:
 ```python
-def step(episode: int, pbar: object):
+def step():
     state = env.reset()[0]
 
     DDPG.reset_OUNoise()
 
     steps = 1
-    reward_per_episode = 0
 
     while True:
         action = DDPG.get_action(state)
 
         next_state, reward, done, truncate, _ = env.step(action) 
             
-        pbar.set_description(f"state: {state}, action: {action}, reward: {reward: .2f}, done: {done or truncate}")
-            
         DDPG.buffer.push([state, action, reward, next_state])
 
         state = next_state
 
-        reward_per_episode += reward
         steps += 1
 
         if steps % 5 == 0:
             DDPG.education()
             
-        if steps % 50 == 0:
+        elif steps % 50 == 0:
             DDPG.soft_update()
 
         if done or truncate:
             break
 
-for episode in (pbar := tqdm(range(EPISODES))):
-    step(episode+1, pbar)
+for episode in tqdm(range(EPISODES)):
+    step()
 
 env.close()
 ```
@@ -204,33 +184,22 @@ env.close()
 def step(episode: int, pbar: object):
     state = env.reset()[0]
 
-    steps = 1
-    reward_per_episode = 0
-
     while True:
-        action, value, log_prob = PPO.get_action(state)
+        action, state_value, log_prob = ppo.get_action(state)
 
         next_state, reward, done, truncate, _ = env.step(action) 
 
-        state_for_pbar = ','.join(f'{x: .1f}' for x in state)
-        action_for_pbar = ','.join(f'{x: .1f}' for x in action)
-            
-        pbar.set_description(f"state: [{state_for_pbar}], action: [{action_for_pbar}], reward: {reward: .2f}, done: {done or truncate}")
-
-        PPO.memory.push(state, action, reward, done, value, log_prob)
+        ppo.memory.push(state, action, reward, done, state_value, log_prob)
             
         state = next_state
-
-        reward_per_episode += reward
-        steps += 1
 
         if done or truncate:
             break
     
-    PPO.education()
+    ppo.education()
 
-for episode in (pbar := tqdm(range(EPISODES))):
-    step(episode+1, pbar)
+for episode in tqdm(range(EPISODES)):
+    step()
 
 env.close()
 ```
@@ -240,9 +209,15 @@ env.close()
 Graphic = Graphic(
     x = 'Episodes',
     y = 'Rewards per episode',
-    title = f'Progress of learning in {env.spec.id} by DQN',
+    title = f'Progress of learning in {env.spec.id} by some a RL algorithm',
     hyperparameters={
         ...
+        '''
+        e. g.
+        "lr": ppo.lr,
+        "batch_size": ppo.batch_size,
+        "mini_batch_size": ppo.mini_batch_size
+        '''
     }
 )
 ```
@@ -259,6 +234,6 @@ For show your final result of learning, use:
 Graphic.show()
 ```
 
-All code is implemented in the PyTorch framework.
+All code is implemented in the PyTorch framework with Python.
 
 References: https://github.com/nikhilbarhate99/PPO-PyTorch/tree/master/

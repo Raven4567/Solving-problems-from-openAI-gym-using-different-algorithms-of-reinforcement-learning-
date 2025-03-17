@@ -1,19 +1,21 @@
-import torch
-from torch import nn, tensor, optim, device
+import torch as t
+from torch import nn, optim
+
 import numpy as np
-from random import sample, random, randint
+
+from random import sample, random
 from collections import deque
 
-device = device('cuda' if torch.cuda.is_available() else 'cpu')
+device = t.device('cuda' if t.cuda.is_available() else 'cpu')
 
 class ReplayBuffer:
-    def __init__(self, maxlen):
+    def __init__(self, maxlen: int):
         self.memory = deque([], maxlen=maxlen)
     
     def push(self, data: list):
         self.memory.append([np.array(x) for x in data])
     
-    def sample_batch(self, batch_size: int = 64):
+    def sample_batch(self, batch_size: int):
         return sample(self.memory, k=batch_size)
     
     def __len__(self):
@@ -24,28 +26,39 @@ class Network(nn.Module):
         super().__init__()
 
         self.model = nn.Sequential(
-            nn.Linear(observ_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, action_dim)
+            nn.Linear(observ_dim, 64),
+            nn.ReLU6(inplace=True),
+
+            nn.Linear(64, 64),
+            nn.ReLU6(inplace=True),
+
+            nn.Linear(64, action_dim)
         )
 
-        for layer in self.model:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, 0)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.normal_(m.bias, mean=0, std=0.01)
+                    
+            elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
 
         self.to(device)
     
-    def forward(self, state: tensor):
+    def forward(self, state: t.Tensor):
         return self.model(state)
 
 class DQN:
-    def __init__(self, Action_dim: int, Observ_dim: int, episodes: int, lr: float = 0.001, eps: float = 0.995, eps_min: float = 0.005, maxlen_of_buffer: int = 50000, batch_size: int = 64, gamma: float = 0.99, TAU: float = 0.005):
-        self.policy_net = Network(Action_dim, Observ_dim)
-        self.target_net = Network(Action_dim, Observ_dim)
+    def __init__(self, action_dim: int, observ_dim: int, count_of_decay: int, lr: float = 0.001, eps_start: float = 0.995, eps_end: float = 0.005, maxlen_of_buffer: int = 50000, batch_size: int = 64, gamma: float = 0.995, TAU: float = 0.005):
+        self.policy_net = Network(action_dim, observ_dim)
+        self.target_net = Network(action_dim, observ_dim)
         self.buffer = ReplayBuffer(maxlen_of_buffer)
 
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -53,9 +66,9 @@ class DQN:
         self.loss_fn = nn.SmoothL1Loss()
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=lr, amsgrad=True)
 
-        self.eps = eps
-        self.eps_min = eps_min
-        self.eps_decay = self.eps_min ** (1/episodes)
+        self.eps = eps_start
+        self.eps_end = eps_end
+        self.eps_decay = self.eps_end ** (1/count_of_decay)
 
         self.batch_size = batch_size
         self.gamma = gamma
@@ -63,20 +76,18 @@ class DQN:
 
         self.lr = lr
 
-        self.episodes = episodes
-
-        self.action_dim = Action_dim
-        self.observ_dim = Observ_dim
+        self.action_dim = action_dim
+        self.observ_dim = observ_dim
     
-    def get_action(self, state):
+    @t.no_grad()
+    def get_action(self, state: t.Tensor):
         if self.eps > random():
-            action = randint(0, self.action_dim - 1)
+            action = t.randint(0, self.action_dim).to(device)
 
         else:
-            state = tensor(state, dtype=torch.float32, device=device)
-
-            with torch.no_grad():
-                action = self.policy_net(state).argmax().item()
+            state = state.to(dtype=t.float32, device=device)
+            
+            action = self.policy_net(state).cpu().argmax().numpy()
             
         return action
     
@@ -91,22 +102,24 @@ class DQN:
 
         states, actions, rewards, next_states = zip(*batch)
 
-        states = tensor(np.array(states), dtype=torch.float32, device=device).unsqueeze(1)
-        actions = tensor(np.array(actions), dtype=torch.int64, device=device)
-        rewards = tensor(np.array(rewards), dtype=torch.float32, device=device)
-        next_states = tensor(np.array(next_states), dtype=torch.float32, device=device).unsqueeze(1)
+        states = t.from_numpy(np.array(states)).to(dtype=t.float32, device=device)
+        actions = t.from_numpy(np.array(actions)).to(dtype=t.int64, device=device)
+        rewards = t.from_numpy(np.array(rewards)).to(dtype=t.float32, device=device)
+        next_states = t.from_numpy(np.array(next_states)).to(dtype=t.float32, device=device)
 
-        with torch.no_grad():
+        with t.no_grad():
             target_Q_values = self.target_net(next_states).max(dim=1)[0]
 
             target_Q_values = rewards + self.gamma * target_Q_values
-        Q_values = self.policy_net(states).gather(1, actions.unsqueeze(1))
+        Q_values = self.policy_net(states).gather(1, actions)
 
         loss = self.loss_fn(Q_values, target_Q_values.unsqueeze(1))
 
         self.optimizer.zero_grad()
+
         loss.backward()
-        #nn.utils.clip_grad_norm_(self.policy_net.parameters(), 5)
+        nn.utils.clip_grad_norm_(self.policy_net.parameters(), 100)
+
         self.optimizer.step()
 
     def soft_update(self):

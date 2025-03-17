@@ -1,5 +1,5 @@
-import torch
-from torch import tensor, from_numpy, nn, optim, device, cuda
+import torch as t
+from torch import nn, optim
 import torch.nn.functional as F
 
 import numpy as np
@@ -7,7 +7,7 @@ import numpy as np
 from random import sample
 from collections import deque
 
-device = device('cuda' if cuda.is_available() else 'cpu')
+device = t.device('cuda' if t.cuda.is_available() else 'cpu')
 
 class ReplayBuffer:
     def __init__(self, maxlen: int):
@@ -29,52 +29,57 @@ class ActorCritic(nn.Module):
         self.action_scaling = action_scaling
 
         self.Actor = nn.Sequential(
-            nn.Linear(observ_dim, 400),
-            nn.ReLU(),
-            nn.Linear(400, 300),
-            nn.ReLU(),
-            nn.Linear(300, action_dim)
+            nn.Linear(observ_dim, 64),
+            nn.ReLU6(inplace=True),
+
+            nn.Linear(64, 64),
+            nn.ReLU6(inplace=True),
+
+            nn.Linear(64, action_dim)
         )
 
         self.Critic = nn.Sequential(
-            nn.Linear(observ_dim + action_dim, 400),
-            nn.ReLU(),
-            nn.Linear(400, 300),
-            nn.ReLU(),
-            nn.Linear(300, 1)
+            nn.Linear(observ_dim + action_dim, 64),
+            nn.ReLU6(inplace=True),
+
+            nn.Linear(64, 64),
+            nn.ReLU6(inplace=True),
+            
+            nn.Linear(64, 1)
         )
 
-        for layer in self.Actor:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, val=0)
-
-        for layer in self.Critic:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, val=0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.normal_(m.bias, mean=0, std=0.01)
+                    
+            elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
 
         self.to(device)
     
-    def get_action(self, state: tensor):
+    def get_action(self, state: t.Tensor):
         pred = F.tanh(self.Actor(state)) * self.action_scaling
 
         return pred
     
-    def get_value_of_action(self, state: tensor, action: tensor):
-        input_data = torch.cat([state, action], dim=1)
+    def get_value_of_action(self, state: t.Tensor, action: t.Tensor):
+        input_data = t.cat([state, action], dim=1)
         pred = self.Critic(input_data)
 
         return pred
 
 class DDPG:
     def __init__(self, max_action: float, min_action: float, Action_dim: int, Observ_dim: int, Actor_lr: float = 0.0003, Critic_lr: float = 0.0025, batch_size: int = 64, gamma: float = 0.98, TAU: float = 0.0005, max_len_of_buffer: int = 50000, mu: float = 0.0, sigma: float = 0.2, theta: float = 0.15):
-        self.policy = ActorCritic(Action_dim, Observ_dim, max_action)
-        self.policy_target = ActorCritic(Action_dim, Observ_dim, max_action)
+        self.policy = t.compile(ActorCritic(Action_dim, Observ_dim, max_action))
+        self.policy_target = t.compile(ActorCritic(Action_dim, Observ_dim, max_action))
 
         self.Buffer = ReplayBuffer(max_len_of_buffer)
 
@@ -103,22 +108,22 @@ class DDPG:
         self.action_dim = Action_dim
         self.observ_dim = Observ_dim
     
-    def get_action(self, state):
-        with torch.no_grad():
-            state = tensor(state, dtype=torch.float32, device=device)
-
+    def get_action(self, state: t.Tensor):
+        state = state.to(dtype=t.float32, device=device)
+        
+        with t.no_grad():
             action = self.policy.get_action(state)
         noise = self.OUNoise()
 
         action += noise
 
-        return np.clip(np.array([a.item() for a in action]), self.min_action, self.max_action)
+        return np.clip(action.cpu().numpy(), self.min_action, self.max_action)
     
     def OUNoise(self):
         dx = self.theta * (self.mu - self.current_noise) + self.sigma * np.random.randn(self.action_dim)
         self.current_noise += dx
 
-        return from_numpy(self.current_noise).to(device)
+        return t.from_numpy(self.current_noise).to(device)
 
     def reset_OUNoise(self):
         self.current_noise = np.full(self.action_dim, self.mu)
@@ -131,12 +136,13 @@ class DDPG:
         
         states, actions, rewards, next_states = zip(*batch)
 
-        states = tensor(np.array(states), dtype=torch.float32, device=device)
-        actions = tensor(np.array(actions), dtype=torch.float32, device=device)
-        rewards = tensor(np.array(rewards), dtype=torch.float32, device=device)
-        next_states = tensor(np.array(next_states), dtype=torch.float32, device=device)
+        states = t.from_numpy(np.array(states)).to(dtype=t.float32, device=device)
+        actions = t.from_numpy(np.array(actions)).to(dtype=t.float32, device=device)
+        rewards = t.from_numpy(np.array(rewards)).to(dtype=t.float32, device=device)
+        next_states = t.from_numpy(np.array(next_states)).to(dtype=t.float32, device=device)
+        #dones = tensor(np.array(dones), dtype=torch.int64, device=device)
 
-        with torch.no_grad():
+        with t.no_grad():
             # Генерация действий для следующего состояния с использованием целевой политики
             target_actions = self.policy_target.get_action(next_states)
             
@@ -144,7 +150,7 @@ class DDPG:
             target_value_of_actions = self.policy_target.get_value_of_action(next_states, target_actions).squeeze(1)
 
             # Обновление целевого Q-значения
-            target_Q_value = rewards + self.gamma * target_value_of_actions
+            target_Q_value = rewards + self.gamma * target_value_of_actions# * (1-dones)
 
         # Получение текущих Q-значений для текущих состояний и действий
         current_q_value = self.policy.get_value_of_action(states, actions).squeeze(1)

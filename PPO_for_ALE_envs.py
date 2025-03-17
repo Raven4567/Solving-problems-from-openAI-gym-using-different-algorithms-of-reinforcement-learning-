@@ -34,7 +34,7 @@ class Memory:
         del self.log_probs[:]
 
 class ActorCritic(nn.Module):
-    def __init__(self, action_scaling: float, action_dim: int, in_channels: int, has_continuous: bool):
+    def __init__(self, action_dim: int, in_channels: int, has_continuous: bool, action_scaling: float):
         super().__init__()
 
         self.has_continuous = has_continuous # discrete or continuous
@@ -46,14 +46,14 @@ class ActorCritic(nn.Module):
             #self.action_std_init = action_std_init
             #self.action_var = torch.full(size=(action_dim,), fill_value=action_std_init ** 2, device=device) 
 
-            self.max_log_of_std = t.log(self.action_scaling)
+            self.log_of_std = t.log(self.action_scaling)
 
             self.Actor = models.mobilenet_v3_small() # Initialization of actor if you're using continuous PPO
             self.Actor.features[0][0] = nn.Conv2d(in_channels, kernel_size=3, stride=2, padding=1, bias=False)
             self.Actor.classifier = self.Actor.classifier[:-1]
 
             self.mu_layer = nn.Linear(1024, action_dim) # mu_layer for getting mean of actions
-            self.log_std = nn.Linear(1024, action_dim) # log_std for gettinf log of standard deviation which we predicting
+            self.log_std_layer = nn.Linear(1024, action_dim) # log_std for gettinf log of standard deviation which we predicting
 
         else:
             self.Actor = models.mobilenet_v3_small() # Initialization of actor if you're using discrete PPO
@@ -65,56 +65,40 @@ class ActorCritic(nn.Module):
         self.Critic.features[0][0] = nn.Conv2d(in_channels, kernel_size=3, stride=2, padding=1, bias=False)
         self.Critic.classifier[-1] = nn.Linear(1024, 1)
 
-        if self.has_continuous: # If our sequential model split up on: Actor, mu_layer and log_std
-            nn.init.xavier_uniform_(self.mu_layer.weight)
-            nn.init.constant_(self.mu_layer.bias, 0)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
-            nn.init.xavier_uniform_(self.log_std.weight)
-            nn.init.constant_(self.log_std.bias, 0)
-
-        for layer in self.Actor.features: # xavier_initialization for actor 
-            if isinstance(layer, (nn.Conv2d, nn.Linear)):
-                nn.init.xavier_uniform_(layer.weight)
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, 0)
-        
-        for layer in self.Actor.classifier: # xavier_initialization for actor 
-            if isinstance(layer, (nn.Conv2d, nn.Linear)):
-                nn.init.xavier_uniform_(layer.weight)
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, 0)
-
-        for layer in self.Critic.features: # xavier_initialization for critic
-            if isinstance(layer, (nn.Conv2d, nn.Linear)):
-                nn.init.xavier_uniform_(layer.weight)
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, 0)
-        
-        for layer in self.Critic.classifier: # xavier_initialization for critic
-            if isinstance(layer, (nn.Conv2d, nn.Linear)):
-                nn.init.xavier_uniform_(layer.weight)
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.normal_(m.bias, mean=0, std=0.01)
+                    
+            elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
         
         # If out sequential model is split up, we unite our parameters of actor, mu_layer, log_std else we just getting Actor.parameters()
         self.Actor_parameters = list(self.Actor.parameters()) + \
                                 list(self.mu_layer.parameters()) + \
-                                list(self.log_std.parameters()) \
+                                list(self.log_std_layer.parameters()) \
                                 if has_continuous else list(self.Actor.parameters())
             
         self.Critic_parameters = list(self.Critic.parameters()) # Critic_parameters for discrete or continuous PPO
         
         self.to(device) # Send of model to GPU or CPU
 
-    def forward(self, state: tensor):
+    def forward(self, state: t.Tensor):
         raise NotImplementedError
 
-    def get_dist(self, state: tensor):
+    def get_dist(self, state: t.Tensor):
         if self.has_continuous:
             features = self.Actor(state)
 
             mu = F.tanh(self.mu_layer(features)) * self.action_scaling
-            std = F.softplus(t.clamp(self.log_std(features), min=-self.max_log_of_std, max=self.max_log_of_std))
+            std = F.softplus(t.clamp(self.log_std(features), min=-self.log_of_std, max=self.log_of_std))
 
             dist = distributions.Normal(mu, std)
         
@@ -124,27 +108,31 @@ class ActorCritic(nn.Module):
 
         return dist
     
-    def get_value(self, state: tensor):
-        return self.Critic(state) 
+    def get_value(self, state: t.Tensor):
+        return self.Critic(state).squeeze(-1)
     
-    def get_evaluate(self, state: tensor, action: tensor):
+    def get_evaluate(self, state: t.Tensor, action: t.Tensor):
         if self.has_continuous: # If continuous
             features = self.Actor(state)
 
             mu = F.tanh(self.mu_layer(features)) * self.action_scaling
-            std = F.softplus(t.clamp(self.log_std(features), min=-self.max_log_of_std, max=self.max_log_of_std))
+            std = F.softplus(t.clamp(self.log_std(features), min=-self.log_of_std, max=self.log_of_std))
 
             dist = distributions.Normal(mu, std)
+
+            log_probs = dist.log_prob(action).sum(dim=-1)
+            dist_entropy = dist.entropy().sum(dim=-1)
         
         else: # If discrete
             probs = self.Actor(state)
             dist = distributions.Categorical(probs)
 
-        log_probs = dist.log_prob(action).sum(dim=-1) if self.has_continuous else dist.log_prob(action)
-        value = self.get_value(state).squeeze(1) # using a .squeeze(1) to transform tensor with shape [x, 1] to vector with shape [200]
-        dist_entropy = dist.entropy().sum(dim=-1) if self.has_continuous else dist.entropy()
+            log_probs = dist.log_prob(action)
+            dist_entropy = dist.entropy()
 
-        return log_probs, value, dist_entropy
+        state_value = self.get_value(state)
+
+        return log_probs, state_value, dist_entropy
 
 class RND(nn.Module):
     def __init__(self, in_features: int, out_features: int, beta: int = 0.02, k_epochs: int = 3):
@@ -212,16 +200,17 @@ class RND(nn.Module):
         self.pred_net.eval()
 
 class PPO:
-    def __init__(self, has_continuous: bool, Action_dim: int, in_channels: int,  
-                 action_scaling: float = None, Actor_lr: float = 0.001, Critic_lr: float = 0.0025, 
-                 k_epochs: int = 23, policy_clip: float = 0.2, GAE_lambda: float = 0.95,
-                 gamma: float = 0.995, batch_size: int = 1024, mini_batch_size: int = 512, 
-                 use_RND: bool = False, beta: int = None
-                 ):
+    def __init__(
+            self, has_continuous: bool, action_dim: int, in_channels: int,  
+            Actor_lr: float = 0.001, Critic_lr: float = 0.0025, action_scaling: float = None,
+            k_epochs: int = 23, policy_clip: float = 0.2, GAE_lambda: float = 0.95,
+            gamma: float = 0.995, batch_size: int = 1024, mini_batch_size: int = 512, 
+            use_RND: bool = False, beta: int = None
+        ):
 
         # Initializing the most important attributes of PPO.
-        self.policy = ActorCritic(action_scaling, Action_dim, in_channels, has_continuous)
-        self.policy_old = ActorCritic(action_scaling, Action_dim, in_channels, has_continuous)
+        self.policy = ActorCritic(action_dim, in_channels, has_continuous, action_scaling)
+        self.policy_old = ActorCritic(action_dim, in_channels, has_continuous, action_scaling)
         if use_RND:
             self.rnd = RND(in_channels, out_features=32, beta=beta)
         
@@ -240,7 +229,7 @@ class PPO:
             self.rnd.eval()
 
         self.loss_fn = nn.MSELoss() # loss function, SmoothL1Loss for tasks of regression
-        self.optimizer = optim.Adam([ # Optimizer AdamW for Actor&Critic
+        self.optimizer = optim.AdamW([ # Optimizer AdamW for Actor&Critic
             {'params': self.policy.Actor_parameters, 'lr': Actor_lr},
             {'params': self.policy.Critic_parameters, 'lr': Critic_lr}
         ])
@@ -266,79 +255,83 @@ class PPO:
         self.k_epochs = k_epochs
         self.GAE_lambda = GAE_lambda
 
-        self.action_dim = Action_dim
+        self.action_dim = action_dim
         self.in_channels = in_channels
 
-    def get_action(self, state: tensor):
-        state = tensor(state, dtype=t.float32, device=device).unsqueeze(0).unsqueeze(0) / 255.0 # Transform numpy state to tensor state
+    def get_action(self, state: t.Tensor):
+        state = state.to(dtype=t.float32, device=device) # Transform numpy state to tensor state
 
         with t.no_grad(): # torch.no_grad() for economy of resource
             dist = self.policy_old.get_dist(state)
 
-            # action = dist.sample and scaling if has_continuous, else just dist.smaple()
-            action = F.tanh(dist.sample()) * self.action_scaling if self.has_continuous else dist.sample()
-            state_value = self.policy_old.get_value(state).squeeze(0)
-            log_prob = dist.log_prob(action).sum().item() if self.has_continuous else dist.log_prob(action)
+            action = dist.sample()
+            if self.has_continuous:
+                action = F.tanh(action) * self.action_scaling
+                log_prob = dist.log_prob(action).sum(-1)
+            else:
+                log_prob = dist.log_prob(action)
 
-        return action.cpu().numpy(), state_value.cpu().numpy(), log_prob.cpu().numpy()
+            state_value = self.policy_old.get_value(state)
 
-    def batch_packer(self, values: list, batch_size: int):
-        batch = []
+            return action.squeeze(0).cpu().numpy(), state_value.squeeze(0).cpu().numpy(), log_prob.squeeze(0).cpu().numpy()
 
-        values = [i.detach().cpu().numpy() for i in values]
-
-        mini_batches = [[] for _ in range(len(values))]
-
-        while len(values[0]) > 0:
-            unique_values_indexes = np.random.choice(a=np.arange(len(values[0])), replace=False, size=np.minimum(len(values[0]), batch_size))
-
-            elements_for_mini_batches = [value[unique_values_indexes] for value in values]
-
-            values = [np.delete(value, unique_values_indexes, axis=0) for value in values]
-
-            [mini_batches[index].append(t.from_numpy(elements_for_mini_batches[index]).to(device)) for index in range(len(values))]
+    def batch_packer(self, values, batch_size: int):
+        if isinstance(values, t.Tensor):
+            batch = list(t.utils.data.DataLoader(values, batch_size))
         
-        [batch.append(mini_batches[index]) for index in range(len(values))]
+        elif isinstance(values, list):
+            batch = [list(t.utils.data.DataLoader(value, batch_size)) for value in values]
 
         return batch
 
-    def single_batch_packer(self, value: tensor, batch_size: int):
-        value = value.detach().cpu().numpy()
-
-        mini_batches = []
-
-        while len(value) > 0:
-            unique_values_indexes = np.random.choice(a=np.arange(len(value)), replace=False, size=np.minimum(len(value), batch_size))
-
-            element_for_mini_batch = value[unique_values_indexes]
-    
-            value = np.delete(value, unique_values_indexes, axis=0)
-
-            mini_batches.append(t.from_numpy(element_for_mini_batch).to(device))
-
-        return mini_batches
-
-    def compute_gae(self, rewards, dones, values, next_value):
+    def compute_gae(self, rewards: np.ndarray, dones: np.ndarray, state_values: np.ndarray, next_value: np.ndarray):
         # Just computing of GAE.
 
         gae = 0
         returns = []
-        for step in reversed(range(len(rewards))):
-            delta = rewards[step] + self.gamma * next_value * (1 - dones[step]) - values[step]
+        for step in reversed(range(len(state_values))):
+            delta = rewards[step] + self.gamma * next_value * (1 - dones[step]) - state_values[step]
             gae = delta + self.gamma * self.GAE_lambda * (1 - dones[step]) * gae
             
-            returns.insert(0, gae + values[step])
+            returns.insert(0, gae + state_values[step])
 
-            next_value = values[step]
+            next_value = state_values[step]
 
         return returns
 
+    def clip_memory(self):
+        """This function is needed to prevent the situation 
+        where batch_tensor.shape[0] = 1, because if
+        we feed a batch with size 1 into a model with enabled the train() mode 
+        we will get the error.
+        
+        The function takes all lists from self.memory and checks if the length of any list
+        is a multiple of batch_size. If any list is bigger than self.batch_size by exactly 1 item, 
+        then the last item is deleted."""
+        
+        values = self.memory.states, self.memory.actions, self.memory.log_probs, self.memory.rewards, self.memory.dones, self.memory.state_values
+
+        new_values = []
+        for single_list in values:
+            # Check if the length of the list is a multiple of batch_size
+            if (len(single_list)-1) % self.batch_size == 0:
+                # If it is, remove the last element
+                new_values.append(single_list[:-1])
+            
+            else:
+                # If it is not, do nothing
+                new_values.append(single_list)
+        
+        self.memory.states, self.memory.actions, self.memory.log_probs, self.memory.rewards, self.memory.dones, self.memory.state_values = new_values
+    
     def education(self):
         if len(self.memory.states) < self.batch_size:
             return 
 
+        self.clip_memory()
+
         # Copy data
-        old_states = t.from_numpy(np.array(self.memory.states)).to(device).unsqueeze(1).detach()
+        old_states = t.from_numpy(np.array(self.memory.states)).to(device).detach()
         old_actions = t.from_numpy(np.array(self.memory.actions)).to(device).detach()
         old_log_probs = t.from_numpy(np.array(self.memory.log_probs)).to(device).detach()
         old_values = t.from_numpy(np.array(self.memory.state_values)).to(device).detach()
@@ -347,7 +340,7 @@ class PPO:
             rewards = (
                 t.from_numpy(np.array(self.memory.rewards)).to(device) + \
                 self.rnd.compute_intristic_reward(
-                    self.single_batch_packer(old_states, self.mini_batch_size)
+                    self.batch_packer(old_states, self.mini_batch_size)
                     )
                 ).detach().cpu().numpy()
         else:
@@ -358,26 +351,22 @@ class PPO:
         self.memory.clear()
 
         # Computing GAE
-        state_values = t.cat([self.policy.get_value(i).squeeze(dim=-1) for i in self.single_batch_packer(old_states, self.mini_batch_size)], dim=0).detach().cpu().numpy()
+        state_values = t.cat([self.policy.get_value(i) for i in self.batch_packer(old_states, self.mini_batch_size)], dim=0).detach().cpu().numpy()
         next_value = state_values[-1]
         returns = self.compute_gae(rewards, dones, state_values, next_value)
-        returns = tensor(returns, dtype=t.float32, device=device).detach()
+        returns = t.from_numpy(np.array(returns)).to(dtype=t.float32, device=device).detach()
 
         advantages = returns - old_values # calculate advantage
 
-        batch = self.batch_packer([old_states, old_actions, old_log_probs, advantages, returns], batch_size=self.batch_size)
+        batches = self.batch_packer([old_states, old_actions, old_log_probs, advantages, returns], batch_size=self.batch_size)
         
         # K_epochs cycle
         for _ in range(self.k_epochs):
-            
-            t.cuda.empty_cache() if device == 'cuda' else 0
+            for batch_states, batch_actions, batch_log_probs, batch_advantages, batch_returns in zip(*batches):
 
-            for old_states_for_batches, old_actions_for_batches, old_log_probs_for_batches, advantages_for_batches, returns_for_batches in zip(*batch):    
-                self.optimizer.zero_grad()
-
-                mini_batch = self.batch_packer([old_states_for_batches, old_actions_for_batches, old_log_probs_for_batches, returns_for_batches, advantages_for_batches], batch_size=self.mini_batch_size)
-
-                for batch_states, batch_actions, batch_log_probs, batch_returns, batch_advantages in zip(*mini_batch):
+                mini_batches = self.batch_packer([batch_states, batch_actions, batch_log_probs, batch_advantages, batch_returns], batch_size=self.mini_batch_size)
+                
+                for mini_batch_states, mini_batch_actions, mini_batch_log_probs, mini_batch_advantages, mini_batch_returns in zip(*mini_batches):
                     # Collecting log probs, values of states, and dist entropy
                     log_probs, state_values, dist_entropy = self.policy.get_evaluate(batch_states, batch_actions)
                             
@@ -396,6 +385,8 @@ class PPO:
                 nn.utils.clip_grad_value_(self.policy.Critic_parameters, 100) # cliping of critic parameters
                     
                 self.optimizer.step()
+
+        t.cuda.empty_cache() if device == 'cuda' else None
 
         self.policy_old.load_state_dict(self.policy.state_dict()) # load parameters of policy to policy_old
     
