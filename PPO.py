@@ -294,7 +294,7 @@ class PPO:
 
         state_value = self.policy_old.get_value(state)
 
-        return action.squeeze(-1).cpu().numpy(), state_value.squeeze(-1).cpu().numpy(), log_prob.squeeze(-1).cpu().numpy()
+        return action.squeeze(0).cpu().numpy(), state_value.squeeze(0).cpu().numpy(), log_prob.squeeze(0).cpu().numpy()
     
     def batch_packer(self, values, batch_size: int):
         if isinstance(values, t.Tensor):
