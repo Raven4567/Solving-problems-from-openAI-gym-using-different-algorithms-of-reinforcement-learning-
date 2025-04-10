@@ -40,7 +40,7 @@ class ActorCritic(nn.Module):
         if self.has_continuous:
             self.action_scaling = t.tensor(action_scaling, dtype=t.float32, device=device) # for scaling dist.sample() if you're using continuous PPO
 
-            self.log_of_std = t.log(self.action_scaling)
+            self.log_std = t.log(self.action_scaling)
                 
             self.Actor = nn.Sequential(
                 nn.Linear(observ_dim, 64),
@@ -50,11 +50,10 @@ class ActorCritic(nn.Module):
                 nn.Linear(64, 64),
                 nn.GroupNorm(64 // 8, 64),
                 nn.ReLU6(inplace=True),
-                        
             ) # Initialization of actor if you're using continuous PPO
 
             self.mu_layer = nn.Linear(64, action_dim) # mu_layer for getting mean of actions
-            self.log_std = nn.Linear(64, action_dim) # log_std for gettinf log of standard deviation which we predicting
+            self.log_std_layer = nn.Linear(64, action_dim) # log_std for gettinf log of standard deviation which we predicting
 
         else:
             self.Actor = nn.Sequential(
@@ -83,7 +82,7 @@ class ActorCritic(nn.Module):
         ) # Critic's initialization
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, (nn.Conv2d, nn.Conv1d)):
                 nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
@@ -93,14 +92,14 @@ class ActorCritic(nn.Module):
                 if m.bias is not None:
                     nn.init.normal_(m.bias, mean=0, std=0.01)
                     
-            elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
+            elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
         
         # If out sequential model is split up, we unite our parameters of actor, mu_layer, log_std else we just getting Actor.parameters()
         self.Actor_parameters = list(self.Actor.parameters()) + \
                                 list(self.mu_layer.parameters()) + \
-                                list(self.log_std.parameters()) \
+                                list(self.log_std_layer.parameters()) \
                                 if has_continuous else list(self.Actor.parameters())
             
         self.Critic_parameters = list(self.Critic.parameters()) # Critic_parameters for discrete or continuous PPO
@@ -115,7 +114,7 @@ class ActorCritic(nn.Module):
             features = self.Actor(state)
 
             mu = F.tanh(self.mu_layer(features)) * self.action_scaling
-            std = F.softplus(t.clamp(self.log_std(features), min=-self.log_of_std, max=self.log_of_std))
+            std = F.softplus(t.clamp(self.log_std_layer(features), min=-self.log_std, max=self.log_std))
 
             dist = distributions.Normal(mu, std)
         
@@ -128,26 +127,18 @@ class ActorCritic(nn.Module):
     def get_value(self, state: t.Tensor):
         return self.Critic(state).squeeze(-1)
     
-    def get_evaluate(self, state: t.Tensor, action: t.Tensor):
-        if self.has_continuous: # If continuous
-            features = self.Actor(state)
+    def get_evaluate(self, states: t.Tensor, actions: t.Tensor):
+        dist = self.get_dist(states)
 
-            mu = t.tanh(self.mu_layer(features)) * self.action_scaling
-            std = F.softplus(t.clamp(self.log_std(features), min=-self.log_of_std, max=self.log_of_std))
-
-            dist = distributions.Normal(mu, std)
-
-            log_probs = dist.log_prob(action).sum(dim=-1)
-            dist_entropy = dist.entropy().sum(dim=-1)
+        log_probs = dist.log_prob(actions)
+        dist_entropy = dist.entropy()
+        if self.has_continuous:
+            log_probs = log_probs.sum(-1)
+            dist_entropy = dist_entropy.sum(-1)
+        else:
+            pass
         
-        else: # If discrete
-            probs = self.Actor(state)
-            dist = distributions.Categorical(probs)
-
-            log_probs = dist.log_prob(action)
-            dist_entropy = dist.entropy()
-        
-        state_value = self.get_value(state)
+        state_value = self.get_value(states)
 
         return log_probs, state_value, dist_entropy
 
@@ -320,11 +311,9 @@ class PPO:
 
         return returns
 
-    def education(self):
+    def learn(self):
         if len(self.memory.states) < self.batch_size:
             return 
-
-        # self.clip_memory()
 
         old_states = t.from_numpy(np.array(self.memory.states)).to(device).detach()
         old_actions = t.from_numpy(np.array(self.memory.actions)).to(device).detach()
